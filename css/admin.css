@@ -1,0 +1,615 @@
+/**
+ * Стили админ панели
+ */
+
+/* Модальное окно входа */
+.admin-login {
+    max-width: 400px;
+    margin: 0 auto;
+    padding: var(--spacing-8);
+}
+
+.admin-login-logo {
+    text-align: center;
+    margin-bottom: var(--spacing-8);
+}
+
+.admin-login-logo i {
+    font-size: 4rem;
+    color: var(--primary-color);
+    margin-bottom: var(--spacing-4);
+    display: block;
+}
+
+.admin-login-logo h2 {
+    font-size: var(--font-size-2xl);
+    color: var(--gray-900);
+}
+
+/* Админ панель */
+.admin-panel {
+    display: flex;
+    flex-direction: column;
+    height: 100%;
+    max-height: 90vh;
+}
+
+.admin-header {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    padding: var(--spacing-4) var(--spacing-6);
+    background-color: var(--gray-900);
+    color: var(--white);
+}
+
+.admin-header-title {
+    font-size: var(--font-size-lg);
+    font-weight: 600;
+    display: flex;
+    align-items: center;
+    gap: var(--spacing-2);
+}
+
+.admin-header-title i {
+    color: var(--primary-color);
+}
+
+.admin-header-actions {
+    display: flex;
+    gap: var(--spacing-2);
+}
+
+.admin-tabs {
+    display: flex;
+    background-color: var(--gray-100);
+    padding: var(--spacing-2);
+    gap: var(--spacing-1);
+}
+
+.admin-tab {
+    flex: 1;
+    padding: var(--spacing-3) var(--spacing-4);
+    border: none;
+    border-radius: var(--radius-md);
+    background-color: transparent;
+    color: var(--gray-600);
+    font-family: var(--font-family);
+    font-size: var(--font-size-sm);
+    font-weight: 500;
+    cursor: pointer;
+    transition: all var(--transition-fast);
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    gap: var(--spacing-2);
+}
+
+.admin-tab:hover:not(.active) {
+    background-color: var(--gray-200);
+}
+
+.admin-tab.active {
+    background-color: var(--white);
+    color: var(--primary-color);
+    box-shadow: var(--shadow-sm);
+}
+
+.admin-tab-badge {
+    background-color: var(--danger-color);
+    color: var(--white);
+    font-size: 10px;
+    padding: 2px 6px;
+    border-radius: var(--radius-full);
+}
+
+.admin-content {
+    flex: 1;
+    overflow-y: auto;
+    padding: var(--spacing-6);
+}
+
+.admin-section {
+    display: none;
+}
+
+.admin-section.active {
+    display: block;
+}
+
+/* Toolbar */
+.admin-toolbar {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    margin-bottom: var(--spacing-6);
+    flex-wrap: wrap;
+    gap: var(--spacing-4);
+}
+
+.admin-toolbar-left {
+    display: flex;
+    gap: var(--spacing-3);
+    align-items: center;
+}
+
+.admin-toolbar-right {
+    display: flex;
+    gap: var(--spacing-3);
+}
+
+.admin-search {
+    position: relative;
+}
+
+.admin-search input {
+    padding-left: var(--spacing-10);
+    min-width: 250px;
+}
+
+.admin-search i {
+    position: absolute;
+    left: var(--spacing-4);
+    top: 50%;
+    transform: translateY(-50%);
+    color: var(--gray-400);
+}
+
+/* Таблица */
+.admin-table {
+    width: 100%;
+    background-color: var(--white);
+    border-radius: var(--radius-lg);
+    overflow: hidden;
+    box-shadow: var(--shadow-sm);
+}
+
+.admin-table th,
+.admin-table td {
+    padding: var(--spacing-4);
+    text-align: left;
+    border-bottom: 1px solid var(--gray-100);
+}
+
+.admin-table th {
+    background-color: var(--gray-50);
+    font-weight: 600;
+    font-size: var(--font-size-sm);
+    color: var(--gray-600);
+    text-transform: uppercase;
+    letter-spacing: 0.5px;
+}
+
+.admin-table tbody tr:hover {
+    background-color: var(--gray-50);
+}
+
+.admin-table-image {
+    width: 50px;
+    height: 50px;
+    border-radius: var(--radius-md);
+    object-fit: cover;
+}
+
+.admin-table-actions {
+    display: flex;
+    gap: var(--spacing-2);
+}
+
+.admin-table-btn {
+    padding: var(--spacing-2);
+    border: none;
+    border-radius: var(--radius-md);
+    cursor: pointer;
+    transition: all var(--transition-fast);
+}
+
+.admin-table-btn.edit {
+    background-color: var(--info-light);
+    color: var(--info-color);
+}
+
+.admin-table-btn.edit:hover {
+    background-color: var(--info-color);
+    color: var(--white);
+}
+
+.admin-table-btn.delete {
+    background-color: var(--danger-light);
+    color: var(--danger-color);
+}
+
+.admin-table-btn.delete:hover {
+    background-color: var(--danger-color);
+    color: var(--white);
+}
+
+.admin-table-btn.success {
+    background-color: var(--success-light);
+    color: var(--success-color);
+}
+
+.admin-table-btn.success:hover {
+    background-color: var(--success-color);
+    color: var(--white);
+}
+
+.admin-table-btn.warning {
+    background-color: var(--warning-light);
+    color: var(--warning-color);
+}
+
+.admin-table-btn.warning:hover {
+    background-color: var(--warning-color);
+    color: var(--white);
+}
+
+/* Карточки статистики */
+.admin-stats {
+    display: grid;
+    grid-template-columns: repeat(4, 1fr);
+    gap: var(--spacing-4);
+    margin-bottom: var(--spacing-6);
+}
+
+.admin-stat-card {
+    background-color: var(--white);
+    border-radius: var(--radius-lg);
+    padding: var(--spacing-5);
+    box-shadow: var(--shadow-sm);
+    display: flex;
+    align-items: center;
+    gap: var(--spacing-4);
+}
+
+.admin-stat-icon {
+    width: 60px;
+    height: 60px;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    border-radius: var(--radius-lg);
+    font-size: var(--font-size-xl);
+}
+
+.admin-stat-icon.primary {
+    background-color: var(--primary-light);
+    color: var(--primary-color);
+}
+
+.admin-stat-icon.success {
+    background-color: var(--success-light);
+    color: var(--success-color);
+}
+
+.admin-stat-icon.warning {
+    background-color: var(--warning-light);
+    color: var(--warning-color);
+}
+
+.admin-stat-icon.danger {
+    background-color: var(--danger-light);
+    color: var(--danger-color);
+}
+
+.admin-stat-info {
+    flex: 1;
+}
+
+.admin-stat-value {
+    font-size: var(--font-size-2xl);
+    font-weight: 700;
+    color: var(--gray-900);
+}
+
+.admin-stat-label {
+    font-size: var(--font-size-sm);
+    color: var(--gray-500);
+}
+
+@media (max-width: 992px) {
+    .admin-stats {
+        grid-template-columns: repeat(2, 1fr);
+    }
+}
+
+@media (max-width: 576px) {
+    .admin-stats {
+        grid-template-columns: 1fr;
+    }
+}
+
+/* Форма добавления авто */
+.add-car-form {
+    display: grid;
+    gap: var(--spacing-6);
+}
+
+.add-car-grid {
+    display: grid;
+    grid-template-columns: repeat(3, 1fr);
+    gap: var(--spacing-4);
+}
+
+@media (max-width: 768px) {
+    .add-car-grid {
+        grid-template-columns: 1fr;
+    }
+}
+
+/* Список запчастей */
+.parts-checklist {
+    display: grid;
+    grid-template-columns: repeat(auto-fill, minmax(280px, 1fr));
+    gap: var(--spacing-3);
+    max-height: 400px;
+    overflow-y: auto;
+    padding: var(--spacing-4);
+    background-color: var(--gray-50);
+    border-radius: var(--radius-lg);
+}
+
+.part-check-item {
+    display: flex;
+    align-items: center;
+    gap: var(--spacing-3);
+    padding: var(--spacing-3);
+    background-color: var(--white);
+    border-radius: var(--radius-md);
+    border: 2px solid var(--gray-200);
+    cursor: pointer;
+    transition: all var(--transition-fast);
+}
+
+.part-check-item:hover {
+    border-color: var(--primary-color);
+}
+
+.part-check-item.selected {
+    border-color: var(--primary-color);
+    background-color: var(--primary-light);
+}
+
+.part-check-item input[type="checkbox"] {
+    width: 20px;
+    height: 20px;
+    accent-color: var(--primary-color);
+}
+
+.part-check-info {
+    flex: 1;
+}
+
+.part-check-name {
+    font-weight: 500;
+    font-size: var(--font-size-sm);
+    color: var(--gray-800);
+}
+
+.part-check-category {
+    font-size: var(--font-size-xs);
+    color: var(--gray-500);
+}
+
+/* Форма детализации запчасти */
+.part-detail-form {
+    background-color: var(--gray-50);
+    border-radius: var(--radius-lg);
+    padding: var(--spacing-5);
+    margin-top: var(--spacing-4);
+}
+
+.part-detail-header {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    margin-bottom: var(--spacing-4);
+    padding-bottom: var(--spacing-3);
+    border-bottom: 1px solid var(--gray-200);
+}
+
+.part-detail-title {
+    font-weight: 600;
+    color: var(--gray-900);
+    display: flex;
+    align-items: center;
+    gap: var(--spacing-2);
+}
+
+.part-detail-grid {
+    display: grid;
+    grid-template-columns: repeat(3, 1fr);
+    gap: var(--spacing-4);
+}
+
+@media (max-width: 768px) {
+    .part-detail-grid {
+        grid-template-columns: 1fr;
+    }
+}
+
+/* Загрузка изображений */
+.image-upload-area {
+    border: 2px dashed var(--gray-300);
+    border-radius: var(--radius-lg);
+    padding: var(--spacing-6);
+    text-align: center;
+    cursor: pointer;
+    transition: all var(--transition-fast);
+}
+
+.image-upload-area:hover {
+    border-color: var(--primary-color);
+    background-color: var(--primary-light);
+}
+
+.image-upload-icon {
+    font-size: 2rem;
+    color: var(--gray-400);
+    margin-bottom: var(--spacing-2);
+}
+
+.image-upload-text {
+    color: var(--gray-600);
+    font-size: var(--font-size-sm);
+}
+
+.image-previews {
+    display: flex;
+    flex-wrap: wrap;
+    gap: var(--spacing-2);
+    margin-top: var(--spacing-4);
+}
+
+.image-preview {
+    position: relative;
+    width: 80px;
+    height: 80px;
+    border-radius: var(--radius-md);
+    overflow: hidden;
+}
+
+.image-preview img {
+    width: 100%;
+    height: 100%;
+    object-fit: cover;
+}
+
+.image-preview-remove {
+    position: absolute;
+    top: 4px;
+    right: 4px;
+    width: 20px;
+    height: 20px;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    background-color: var(--danger-color);
+    color: var(--white);
+    border: none;
+    border-radius: 50%;
+    font-size: 10px;
+    cursor: pointer;
+}
+
+/* Существующий товар */
+.existing-part-notice {
+    background-color: var(--info-light);
+    border: 1px solid var(--info-color);
+    border-radius: var(--radius-lg);
+    padding: var(--spacing-4);
+    display: flex;
+    align-items: center;
+    gap: var(--spacing-3);
+    margin-bottom: var(--spacing-4);
+}
+
+.existing-part-notice i {
+    font-size: var(--font-size-xl);
+    color: var(--info-color);
+}
+
+.existing-part-notice-text {
+    flex: 1;
+}
+
+.existing-part-notice-title {
+    font-weight: 600;
+    color: var(--gray-900);
+}
+
+.existing-part-notice-desc {
+    font-size: var(--font-size-sm);
+    color: var(--gray-600);
+}
+
+/* Бронирования */
+.reservation-card {
+    background-color: var(--white);
+    border-radius: var(--radius-lg);
+    padding: var(--spacing-5);
+    margin-bottom: var(--spacing-4);
+    box-shadow: var(--shadow-sm);
+}
+
+.reservation-card-header {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    margin-bottom: var(--spacing-4);
+    padding-bottom: var(--spacing-3);
+    border-bottom: 1px solid var(--gray-100);
+}
+
+.reservation-card-order {
+    font-size: var(--font-size-lg);
+    font-weight: 700;
+    font-family: monospace;
+    color: var(--gray-900);
+}
+
+.reservation-card-body {
+    display: grid;
+    grid-template-columns: 1fr 1fr;
+    gap: var(--spacing-4);
+}
+
+.reservation-card-info {
+    display: flex;
+    flex-direction: column;
+    gap: var(--spacing-2);
+}
+
+.reservation-card-row {
+    display: flex;
+    align-items: center;
+    gap: var(--spacing-2);
+    font-size: var(--font-size-sm);
+}
+
+.reservation-card-row i {
+    width: 20px;
+    color: var(--gray-400);
+}
+
+.reservation-card-items {
+    background-color: var(--gray-50);
+    border-radius: var(--radius-md);
+    padding: var(--spacing-3);
+    font-size: var(--font-size-sm);
+}
+
+.reservation-card-item {
+    padding: var(--spacing-2) 0;
+    border-bottom: 1px dashed var(--gray-200);
+}
+
+.reservation-card-item:last-child {
+    border-bottom: none;
+}
+
+.reservation-card-footer {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    margin-top: var(--spacing-4);
+    padding-top: var(--spacing-4);
+    border-top: 1px solid var(--gray-100);
+}
+
+.reservation-card-total {
+    font-size: var(--font-size-xl);
+    font-weight: 700;
+    color: var(--primary-color);
+}
+
+.reservation-card-actions {
+    display: flex;
+    gap: var(--spacing-2);
+}
+
+@media (max-width: 768px) {
+    .reservation-card-body {
+        grid-template-columns: 1fr;
+    }
+}
