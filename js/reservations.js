@@ -2,7 +2,7 @@
  * Модуль бронирований
  */
 const Reservations = {
-    
+
     openCheckoutModal(items) {
         if (!Auth.isLoggedIn()) {
             Auth.showLoginModal();
@@ -10,20 +10,23 @@ const Reservations = {
         }
 
         const userData = Auth.getUserData();
-        const parts = items.map(i => {
+        
+        // Проверяем доступность товаров
+        const parts = [];
+        for (const i of items) {
             const p = Catalog.getPart(i.partId);
-            if (!p) return null;
+            if (!p) continue;
+            
             const available = Catalog.getAvailable(p);
-            // Проверяем доступность
             if (available < i.qty) {
                 Utils.toast(`${p.name}: доступно только ${available} шт.`, 'warning');
-                return null;
+                return;
             }
-            return { ...p, qty: i.qty };
-        }).filter(Boolean);
+            parts.push({ ...p, qty: i.qty });
+        }
 
         if (parts.length === 0) {
-            Utils.toast('Нет доступных товаров для бронирования', 'error');
+            Utils.toast('Нет доступных товаров', 'error');
             return;
         }
 
@@ -114,19 +117,19 @@ const Reservations = {
 
         try {
             const orderNum = Utils.genOrderNum();
-
-            // Подготовка данных бронирования
             const reservationItems = [];
-            
+
+            // Резервируем товары
             for (const i of items) {
                 const p = Catalog.getPart(i.partId);
                 if (!p) continue;
-                
+
+                // Проверяем еще раз доступность
                 const available = Catalog.getAvailable(p);
                 if (available < i.qty) {
                     throw new Error(`${p.name}: недостаточно товара`);
                 }
-                
+
                 reservationItems.push({
                     partId: i.partId,
                     name: p.name,
@@ -136,15 +139,21 @@ const Reservations = {
                     price: p.price,
                     quantity: i.qty
                 });
+
+                // Увеличиваем reserved
+                const partRef = db.collection(DB.PARTS).doc(i.partId);
+                const partDoc = await partRef.get();
                 
-                // Увеличиваем reserved для товара
-                await db.collection(DB.PARTS).doc(i.partId).update({
-                    reserved: firebase.firestore.FieldValue.increment(i.qty)
-                });
+                if (partDoc.exists) {
+                    const currentReserved = partDoc.data().reserved || 0;
+                    await partRef.update({
+                        reserved: currentReserved + i.qty
+                    });
+                }
             }
 
             // Создаем бронирование
-            const reservation = {
+            await db.collection(DB.RESERVATIONS).add({
                 orderNumber: orderNum,
                 userId: Auth.getUser().uid,
                 items: reservationItems,
@@ -155,11 +164,9 @@ const Reservations = {
                 status: 'pending',
                 createdAt: firebase.firestore.FieldValue.serverTimestamp(),
                 expiresAt: new Date(Date.now() + 24 * 60 * 60 * 1000)
-            };
+            });
 
-            await db.collection(DB.RESERVATIONS).add(reservation);
-
-            // Обновляем профиль пользователя
+            // Обновляем профиль
             await Auth.updateProfile({ name, phone: Utils.formatPhone(phone) });
 
             // Очищаем корзину
@@ -223,9 +230,8 @@ const Reservations = {
         this.openCheckoutModal([{ partId, qty: 1 }]);
     },
 
-    // Генерация чека (маленький, как кассовый)
     generateReceipt(res) {
-        const date = Utils.formatDate(res.createdAt || res.completedAt, true);
+        const date = Utils.formatDate(res.completedAt || res.createdAt, true);
         return `
             <div class="receipt">
                 <div class="receipt-header">
@@ -287,7 +293,6 @@ const Reservations = {
         `;
     },
 
-    // Печать чека
     printReceipt(res) {
         const html = this.generateReceipt(res);
         const win = window.open('', '_blank', 'width=320,height=600');
@@ -305,82 +310,22 @@ const Reservations = {
                         background: #fff;
                         width: 280px;
                     }
-                    .receipt {
-                        width: 260px;
-                    }
-                    .receipt-header {
-                        text-align: center;
-                        margin-bottom: 8px;
-                    }
-                    .receipt-logo {
-                        font-size: 16px;
-                        font-weight: bold;
-                    }
-                    .receipt-subtitle {
-                        font-size: 10px;
-                        color: #666;
-                    }
-                    .receipt-divider {
-                        text-align: center;
-                        color: #999;
-                        margin: 6px 0;
-                        font-size: 10px;
-                        letter-spacing: -1px;
-                    }
-                    .receipt-row {
-                        display: flex;
-                        justify-content: space-between;
-                        font-size: 11px;
-                        margin: 3px 0;
-                    }
-                    .receipt-item {
-                        margin: 6px 0;
-                    }
-                    .receipt-item-name {
-                        font-size: 11px;
-                        font-weight: bold;
-                    }
-                    .receipt-item-line {
-                        display: flex;
-                        justify-content: space-between;
-                        font-size: 11px;
-                        color: #666;
-                    }
-                    .receipt-total {
-                        display: flex;
-                        justify-content: space-between;
-                        font-size: 14px;
-                        font-weight: bold;
-                        margin: 8px 0;
-                    }
-                    .receipt-footer {
-                        text-align: center;
-                        margin-top: 10px;
-                        font-size: 10px;
-                        color: #666;
-                    }
-                    .receipt-barcode {
-                        font-size: 20px;
-                        letter-spacing: 2px;
-                        margin: 6px 0;
-                    }
-                    .receipt-sign {
-                        margin-top: 20px;
-                        text-align: center;
-                    }
-                    .receipt-sign-line {
-                        border-bottom: 1px solid #000;
-                        width: 150px;
-                        height: 25px;
-                        margin: 0 auto 4px;
-                    }
-                    .receipt-sign div:last-child {
-                        font-size: 9px;
-                        color: #666;
-                    }
-                    @media print {
-                        body { padding: 0; }
-                    }
+                    .receipt { width: 260px; }
+                    .receipt-header { text-align: center; margin-bottom: 8px; }
+                    .receipt-logo { font-size: 16px; font-weight: bold; }
+                    .receipt-subtitle { font-size: 10px; color: #666; }
+                    .receipt-divider { text-align: center; color: #999; margin: 6px 0; font-size: 10px; letter-spacing: -1px; }
+                    .receipt-row { display: flex; justify-content: space-between; font-size: 11px; margin: 3px 0; }
+                    .receipt-item { margin: 6px 0; }
+                    .receipt-item-name { font-size: 11px; font-weight: bold; }
+                    .receipt-item-line { display: flex; justify-content: space-between; font-size: 11px; color: #666; }
+                    .receipt-total { display: flex; justify-content: space-between; font-size: 14px; font-weight: bold; margin: 8px 0; }
+                    .receipt-footer { text-align: center; margin-top: 10px; font-size: 10px; color: #666; }
+                    .receipt-barcode { font-size: 20px; letter-spacing: 2px; margin: 6px 0; }
+                    .receipt-sign { margin-top: 20px; text-align: center; }
+                    .receipt-sign-line { border-bottom: 1px solid #000; width: 150px; height: 25px; margin: 0 auto 4px; }
+                    .receipt-sign div:last-child { font-size: 9px; color: #666; }
+                    @media print { body { padding: 0; } }
                 </style>
             </head>
             <body>

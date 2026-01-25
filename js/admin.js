@@ -6,6 +6,7 @@ const Admin = {
     reservations: [],
     inventory: [],
     sales: [],
+    history: [],
     selectedParts: {},
 
     async open() {
@@ -15,7 +16,12 @@ const Admin = {
         }
 
         await this.loadData();
-        const pending = this.reservations.filter(r => r.status === 'pending').length;
+        
+        // Активные брони (pending, confirmed)
+        const activeReservations = this.reservations.filter(r => 
+            r.status === 'pending' || r.status === 'confirmed'
+        );
+        const pendingCount = this.reservations.filter(r => r.status === 'pending').length;
 
         Modal.open({
             title: 'Панель управления',
@@ -24,17 +30,21 @@ const Admin = {
                 <div class="admin-panel">
                     <div class="admin-tabs">
                         <button class="admin-tab ${this.tab === 'reservations' ? 'active' : ''}" data-tab="reservations">
-                            <i class="fas fa-bookmark"></i> Брони
-                            ${pending ? `<span class="count">${pending}</span>` : ''}
+                            <i class="fas fa-bookmark"></i>
+                            <span>Брони</span>
+                            ${pendingCount ? `<span class="count">${pendingCount}</span>` : ''}
                         </button>
                         <button class="admin-tab ${this.tab === 'inventory' ? 'active' : ''}" data-tab="inventory">
-                            <i class="fas fa-warehouse"></i> Склад
+                            <i class="fas fa-warehouse"></i>
+                            <span>Склад</span>
                         </button>
                         <button class="admin-tab ${this.tab === 'add-car' ? 'active' : ''}" data-tab="add-car">
-                            <i class="fas fa-car"></i> Добавить авто
+                            <i class="fas fa-car"></i>
+                            <span>Добавить</span>
                         </button>
-                        <button class="admin-tab ${this.tab === 'sales' ? 'active' : ''}" data-tab="sales">
-                            <i class="fas fa-chart-line"></i> Продажи
+                        <button class="admin-tab ${this.tab === 'history' ? 'active' : ''}" data-tab="history">
+                            <i class="fas fa-history"></i>
+                            <span>История</span>
                         </button>
                     </div>
                     
@@ -47,14 +57,12 @@ const Admin = {
                     <div class="admin-section ${this.tab === 'add-car' ? 'active' : ''}" id="sec-add-car">
                         ${this.renderAddCar()}
                     </div>
-                    <div class="admin-section ${this.tab === 'sales' ? 'active' : ''}" id="sec-sales">
-                        ${this.renderSales()}
+                    <div class="admin-section ${this.tab === 'history' ? 'active' : ''}" id="sec-history">
+                        ${this.renderHistory()}
                     </div>
                 </div>
             `,
-            footer: `
-                <button class="btn btn-secondary" onclick="Modal.closeAll()">Закрыть</button>
-            `
+            footer: `<button class="btn btn-secondary" onclick="Modal.closeAll()">Закрыть</button>`
         });
 
         this.bindEvents();
@@ -71,6 +79,11 @@ const Admin = {
             this.reservations = resSnap.docs.map(d => ({ id: d.id, ...d.data() }));
             this.inventory = invSnap.docs.map(d => ({ id: d.id, ...d.data() }));
             this.sales = salesSnap.docs.map(d => ({ id: d.id, ...d.data() }));
+            
+            // История = завершенные + отмененные брони
+            this.history = this.reservations.filter(r => 
+                r.status === 'completed' || r.status === 'cancelled'
+            );
         } catch (e) {
             console.error('Admin load error:', e);
             Utils.toast('Ошибка загрузки данных', 'error');
@@ -93,41 +106,66 @@ const Admin = {
         if (this.tab === 'add-car') this.bindAddCarEvents();
     },
 
-    // ==================== RESERVATIONS ====================
+    // ==================== RESERVATIONS (только активные) ====================
     renderReservations() {
-        if (!this.reservations.length) {
-            return '<div class="empty"><div class="empty-icon"><i class="fas fa-inbox"></i></div><h3 class="empty-title">Нет бронирований</h3></div>';
+        // Только pending и confirmed
+        const activeRes = this.reservations.filter(r => 
+            r.status === 'pending' || r.status === 'confirmed'
+        );
+
+        if (!activeRes.length) {
+            return `
+                <div class="empty">
+                    <div class="empty-icon"><i class="fas fa-inbox"></i></div>
+                    <h3 class="empty-title">Нет активных бронирований</h3>
+                    <p class="empty-text">Новые брони появятся здесь</p>
+                </div>
+            `;
         }
 
         const stats = {
             pending: this.reservations.filter(r => r.status === 'pending').length,
-            confirmed: this.reservations.filter(r => r.status === 'confirmed').length,
-            completed: this.reservations.filter(r => r.status === 'completed').length,
-            cancelled: this.reservations.filter(r => r.status === 'cancelled').length
+            confirmed: this.reservations.filter(r => r.status === 'confirmed').length
         };
 
         return `
             <div class="admin-stats">
-                <div class="admin-stat"><div class="admin-stat-value" style="color:var(--warning)">${stats.pending}</div><div class="admin-stat-label">Ожидают</div></div>
-                <div class="admin-stat"><div class="admin-stat-value" style="color:var(--primary)">${stats.confirmed}</div><div class="admin-stat-label">Подтверждены</div></div>
-                <div class="admin-stat"><div class="admin-stat-value" style="color:var(--success)">${stats.completed}</div><div class="admin-stat-label">Завершены</div></div>
-                <div class="admin-stat"><div class="admin-stat-value" style="color:var(--danger)">${stats.cancelled}</div><div class="admin-stat-label">Отменены</div></div>
+                <div class="admin-stat">
+                    <div class="admin-stat-value" style="color:var(--warning)">${stats.pending}</div>
+                    <div class="admin-stat-label">Ожидают</div>
+                </div>
+                <div class="admin-stat">
+                    <div class="admin-stat-value" style="color:var(--primary)">${stats.confirmed}</div>
+                    <div class="admin-stat-label">Подтверждены</div>
+                </div>
             </div>
             <div class="reservation-list">
-                ${this.reservations.map(r => this.renderResCard(r)).join('')}
+                ${activeRes.map(r => this.renderResCard(r)).join('')}
             </div>
         `;
     },
 
     renderResCard(r) {
-        const statusColors = { pending: 'var(--warning)', confirmed: 'var(--primary)', completed: 'var(--success)', cancelled: 'var(--danger)' };
-        const statusNames = { pending: 'Ожидает', confirmed: 'Подтверждено', completed: 'Завершено', cancelled: 'Отменено' };
+        const statusColors = { 
+            pending: 'var(--warning)', 
+            confirmed: 'var(--primary)', 
+            completed: 'var(--success)', 
+            cancelled: 'var(--danger)' 
+        };
+        const statusNames = { 
+            pending: 'Ожидает', 
+            confirmed: 'Подтверждено', 
+            completed: 'Завершено', 
+            cancelled: 'Отменено' 
+        };
 
         return `
             <div class="reservation-card">
                 <div class="reservation-header">
                     <span class="reservation-order">${r.orderNumber}</span>
-                    <span class="badge" style="background:${statusColors[r.status]}20;color:${statusColors[r.status]}">${statusNames[r.status]}</span>
+                    <span class="badge" style="background:${statusColors[r.status]}20;color:${statusColors[r.status]}">
+                        ${statusNames[r.status]}
+                    </span>
                 </div>
                 <div class="reservation-body">
                     <div class="reservation-info">
@@ -137,22 +175,31 @@ const Admin = {
                         ${r.comment ? `<p><i class="fas fa-comment"></i> ${r.comment}</p>` : ''}
                     </div>
                     <div class="reservation-items">
-                        ${r.items.map(i => `<div class="reservation-item"><strong>${i.name}</strong> — ${i.quantity} шт. × ${Utils.formatPrice(i.price)}</div>`).join('')}
+                        ${r.items.map(i => `
+                            <div class="reservation-item">
+                                <strong>${i.name}</strong> — ${i.quantity} шт. × ${Utils.formatPrice(i.price)}
+                            </div>
+                        `).join('')}
                     </div>
                 </div>
                 <div class="reservation-footer">
                     <div class="reservation-total">${Utils.formatPrice(r.total)}</div>
                     <div class="reservation-actions">
                         ${r.status === 'pending' ? `
-                            <button class="btn btn-success btn-sm" onclick="Admin.confirmRes('${r.id}')"><i class="fas fa-check"></i> Подтвердить</button>
-                            <button class="btn btn-danger btn-sm" onclick="Admin.cancelRes('${r.id}')"><i class="fas fa-times"></i> Отменить</button>
+                            <button class="btn btn-success btn-sm" onclick="Admin.confirmRes('${r.id}')">
+                                <i class="fas fa-check"></i> Подтвердить
+                            </button>
+                            <button class="btn btn-danger btn-sm" onclick="Admin.cancelRes('${r.id}')">
+                                <i class="fas fa-times"></i> Отменить
+                            </button>
                         ` : ''}
                         ${r.status === 'confirmed' ? `
-                            <button class="btn btn-success btn-sm" onclick="Admin.completeRes('${r.id}')"><i class="fas fa-shopping-bag"></i> Продать</button>
-                            <button class="btn btn-danger btn-sm" onclick="Admin.cancelRes('${r.id}')"><i class="fas fa-times"></i> Отменить</button>
-                        ` : ''}
-                        ${r.status === 'completed' ? `
-                            <button class="btn btn-primary btn-sm" onclick="Admin.printRes('${r.id}')"><i class="fas fa-print"></i> Чек</button>
+                            <button class="btn btn-success btn-sm" onclick="Admin.completeRes('${r.id}')">
+                                <i class="fas fa-shopping-bag"></i> Продать
+                            </button>
+                            <button class="btn btn-danger btn-sm" onclick="Admin.cancelRes('${r.id}')">
+                                <i class="fas fa-times"></i> Отменить
+                            </button>
                         ` : ''}
                     </div>
                 </div>
@@ -162,26 +209,33 @@ const Admin = {
 
     // Подтверждение брони
     async confirmRes(id) {
+        const btn = event.target.closest('button');
+        btn.disabled = true;
+        btn.innerHTML = '<i class="fas fa-spinner fa-spin"></i>';
+
         try {
             await db.collection(DB.RESERVATIONS).doc(id).update({
                 status: 'confirmed',
                 confirmedAt: firebase.firestore.FieldValue.serverTimestamp()
             });
+            
             Utils.toast('Бронирование подтверждено', 'success');
-            await this.refreshRes();
+            await this.refresh();
         } catch (e) {
-            console.error(e);
-            Utils.toast('Ошибка', 'error');
+            console.error('Confirm error:', e);
+            Utils.toast('Ошибка: ' + e.message, 'error');
+            btn.disabled = false;
+            btn.innerHTML = '<i class="fas fa-check"></i> Подтвердить';
         }
     },
 
-    // Отмена брони - возвращаем товары (уменьшаем reserved)
+    // Отмена брони - возвращаем reserved
     async cancelRes(id) {
         if (!await Modal.confirm({
             title: 'Отменить бронь?',
-            message: 'Товары снова станут доступны для бронирования',
+            message: 'Товары снова станут доступны для покупки',
             type: 'danger',
-            confirmText: 'Отменить'
+            confirmText: 'Отменить бронь'
         })) return;
 
         try {
@@ -190,12 +244,20 @@ const Admin = {
 
             // Возвращаем товары (уменьшаем reserved)
             for (const item of res.items) {
-                await db.collection(DB.PARTS).doc(item.partId).update({
-                    reserved: firebase.firestore.FieldValue.increment(-item.quantity)
-                });
+                const partRef = db.collection(DB.PARTS).doc(item.partId);
+                const partDoc = await partRef.get();
+                
+                if (partDoc.exists) {
+                    const currentReserved = partDoc.data().reserved || 0;
+                    const newReserved = Math.max(0, currentReserved - item.quantity);
+                    
+                    await partRef.update({
+                        reserved: newReserved
+                    });
+                }
             }
 
-            // Обновляем статус бронирования
+            // Обновляем статус
             await db.collection(DB.RESERVATIONS).doc(id).update({
                 status: 'cancelled',
                 cancelledAt: firebase.firestore.FieldValue.serverTimestamp()
@@ -208,45 +270,46 @@ const Admin = {
             Catalog.applyFilters();
             Catalog.renderParts();
             
-            await this.refreshRes();
+            await this.refresh();
         } catch (e) {
-            console.error(e);
+            console.error('Cancel error:', e);
             Utils.toast('Ошибка: ' + e.message, 'error');
         }
     },
 
-    // Завершение продажи - списываем товары (уменьшаем quantity и reserved)
+    // Завершение продажи - списываем товары
     async completeRes(id) {
         const res = this.reservations.find(r => r.id === id);
         if (!res) return;
 
         if (!await Modal.confirm({
             title: 'Завершить продажу?',
-            message: 'Товары будут списаны со склада',
+            message: 'Товары будут списаны со склада и добавлены в историю продаж',
             type: 'success',
             confirmText: 'Продать'
         })) return;
 
         try {
-            // Списываем товары со склада
+            // Списываем товары
             for (const item of res.items) {
                 const partRef = db.collection(DB.PARTS).doc(item.partId);
                 const partDoc = await partRef.get();
-                
+
                 if (partDoc.exists) {
-                    const partData = partDoc.data();
-                    const newQuantity = (partData.quantity || 0) - item.quantity;
-                    const newReserved = Math.max(0, (partData.reserved || 0) - item.quantity);
-                    
+                    const data = partDoc.data();
+                    const newQuantity = Math.max(0, (data.quantity || 0) - item.quantity);
+                    const newReserved = Math.max(0, (data.reserved || 0) - item.quantity);
+
                     if (newQuantity <= 0) {
                         // Удаляем товар если quantity = 0
                         await partRef.delete();
+                        console.log(`Deleted part ${item.partId} (quantity = 0)`);
                     } else {
-                        // Уменьшаем quantity и reserved
                         await partRef.update({
                             quantity: newQuantity,
                             reserved: newReserved
                         });
+                        console.log(`Updated part ${item.partId}: qty=${newQuantity}, res=${newReserved}`);
                     }
                 }
             }
@@ -265,53 +328,201 @@ const Admin = {
             });
 
             Utils.toast('Продажа завершена!', 'success');
-            
+
             // Печатаем чек
-            this.printRes(id);
-            
+            Reservations.printReceipt({
+                ...res,
+                completedAt: new Date()
+            });
+
             // Обновляем каталог
             await Catalog.load();
             Catalog.applyFilters();
             Catalog.renderParts();
             App.updateStats();
-            
-            await this.loadData();
-            this.refreshRes();
+
+            await this.refresh();
         } catch (e) {
-            console.error(e);
+            console.error('Complete error:', e);
             Utils.toast('Ошибка: ' + e.message, 'error');
         }
     },
 
-    printRes(id) {
-        const res = this.reservations.find(r => r.id === id) || this.sales.find(s => s.id === id || s.reservationId === id);
-        if (res) Reservations.printReceipt(res);
+    // ==================== HISTORY (завершенные и отмененные) ====================
+    renderHistory() {
+        // Объединяем продажи и отмененные брони
+        const completed = this.reservations.filter(r => r.status === 'completed');
+        const cancelled = this.reservations.filter(r => r.status === 'cancelled');
+        
+        const totalSales = this.sales.reduce((s, x) => s + (x.total || 0), 0);
+
+        if (!completed.length && !cancelled.length) {
+            return `
+                <div class="empty">
+                    <div class="empty-icon"><i class="fas fa-history"></i></div>
+                    <h3 class="empty-title">История пуста</h3>
+                    <p class="empty-text">Завершенные и отмененные заказы появятся здесь</p>
+                </div>
+            `;
+        }
+
+        return `
+            <div class="admin-stats">
+                <div class="admin-stat">
+                    <div class="admin-stat-value" style="color:var(--success)">${Utils.formatPrice(totalSales)}</div>
+                    <div class="admin-stat-label">Сумма продаж</div>
+                </div>
+                <div class="admin-stat">
+                    <div class="admin-stat-value" style="color:var(--success)">${completed.length}</div>
+                    <div class="admin-stat-label">Продано</div>
+                </div>
+                <div class="admin-stat">
+                    <div class="admin-stat-value" style="color:var(--danger)">${cancelled.length}</div>
+                    <div class="admin-stat-label">Отменено</div>
+                </div>
+            </div>
+            
+            <div class="reservation-list">
+                ${this.history.map(r => this.renderHistoryCard(r)).join('')}
+            </div>
+        `;
     },
 
-    async refreshRes() {
-        await this.loadData();
-        document.getElementById('sec-reservations').innerHTML = this.renderReservations();
+    renderHistoryCard(r) {
+        const isCompleted = r.status === 'completed';
+        const statusColor = isCompleted ? 'var(--success)' : 'var(--danger)';
+        const statusName = isCompleted ? 'Продано' : 'Отменено';
+        const date = Utils.formatDate(r.completedAt || r.cancelledAt || r.createdAt, true);
+
+        return `
+            <div class="reservation-card">
+                <div class="reservation-header">
+                    <span class="reservation-order">${r.orderNumber}</span>
+                    <span class="badge" style="background:${statusColor}20;color:${statusColor}">
+                        ${statusName}
+                    </span>
+                </div>
+                <div class="reservation-body">
+                    <div class="reservation-info">
+                        <p><i class="fas fa-user"></i> ${r.customerName}</p>
+                        <p><i class="fas fa-phone"></i> ${r.customerPhone}</p>
+                        <p><i class="fas fa-calendar"></i> ${date}</p>
+                    </div>
+                    <div class="reservation-items">
+                        ${r.items.map(i => `
+                            <div class="reservation-item">
+                                <strong>${i.name}</strong> — ${i.quantity} шт. × ${Utils.formatPrice(i.price)}
+                            </div>
+                        `).join('')}
+                    </div>
+                </div>
+                <div class="reservation-footer">
+                    <div class="reservation-total">${Utils.formatPrice(r.total)}</div>
+                    <div class="reservation-actions">
+                        <button class="btn btn-secondary btn-sm" onclick="Admin.showOrderDetails('${r.id}')">
+                            <i class="fas fa-eye"></i> Детали
+                        </button>
+                        ${isCompleted ? `
+                            <button class="btn btn-primary btn-sm" onclick="Admin.printOrderReceipt('${r.id}')">
+                                <i class="fas fa-print"></i> Чек
+                            </button>
+                        ` : ''}
+                    </div>
+                </div>
+            </div>
+        `;
+    },
+
+    showOrderDetails(id) {
+        const order = this.reservations.find(r => r.id === id) || this.sales.find(s => s.id === id);
+        if (!order) return;
+
+        const isCompleted = order.status === 'completed';
+        const date = Utils.formatDate(order.completedAt || order.cancelledAt || order.createdAt, true);
+
+        Modal.open({
+            title: `Заказ ${order.orderNumber}`,
+            size: 'md',
+            content: `
+                <div style="margin-bottom:20px;">
+                    <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:16px;">
+                        <span class="badge ${isCompleted ? 'badge-success' : 'badge-danger'}" style="font-size:13px;padding:6px 12px;">
+                            ${isCompleted ? 'Продано' : 'Отменено'}
+                        </span>
+                        <span style="color:var(--gray-500);font-size:14px;">${date}</span>
+                    </div>
+                    
+                    <div style="background:var(--gray-50);padding:16px;border-radius:var(--radius);margin-bottom:16px;">
+                        <h4 style="margin-bottom:12px;font-size:14px;color:var(--gray-600);">Клиент</h4>
+                        <p style="margin-bottom:4px;"><strong>${order.customerName}</strong></p>
+                        <p style="color:var(--gray-600);font-size:14px;">${order.customerPhone}</p>
+                        ${order.comment ? `<p style="color:var(--gray-500);font-size:13px;margin-top:8px;"><i class="fas fa-comment"></i> ${order.comment}</p>` : ''}
+                    </div>
+                    
+                    <div style="background:var(--gray-50);padding:16px;border-radius:var(--radius);margin-bottom:16px;">
+                        <h4 style="margin-bottom:12px;font-size:14px;color:var(--gray-600);">Товары</h4>
+                        ${order.items.map(i => `
+                            <div style="display:flex;justify-content:space-between;padding:8px 0;border-bottom:1px solid var(--gray-200);">
+                                <div>
+                                    <strong>${i.name}</strong><br>
+                                    <span style="font-size:12px;color:var(--gray-500);">${i.brand} ${i.model} ${i.year}</span>
+                                </div>
+                                <div style="text-align:right;">
+                                    <div>${i.quantity} × ${Utils.formatPrice(i.price)}</div>
+                                    <div style="font-weight:600;color:var(--primary);">${Utils.formatPrice(i.price * i.quantity)}</div>
+                                </div>
+                            </div>
+                        `).join('')}
+                    </div>
+                    
+                    <div style="display:flex;justify-content:space-between;padding:16px;background:var(--primary);color:white;border-radius:var(--radius);">
+                        <span style="font-size:18px;font-weight:600;">Итого:</span>
+                        <span style="font-size:24px;font-weight:700;">${Utils.formatPrice(order.total)}</span>
+                    </div>
+                </div>
+            `,
+            footer: `
+                ${isCompleted ? `
+                    <button class="btn btn-primary" onclick="Admin.printOrderReceipt('${id}')">
+                        <i class="fas fa-print"></i> Печать чека
+                    </button>
+                ` : ''}
+                <button class="btn btn-secondary" onclick="Modal.closeAll()">Закрыть</button>
+            `
+        });
+    },
+
+    printOrderReceipt(id) {
+        const order = this.reservations.find(r => r.id === id) || this.sales.find(s => s.id === id || s.reservationId === id);
+        if (order) {
+            Reservations.printReceipt(order);
+        }
     },
 
     // ==================== INVENTORY ====================
     renderInventory() {
         if (!this.inventory.length) {
-            return '<div class="empty"><div class="empty-icon"><i class="fas fa-box-open"></i></div><h3 class="empty-title">Склад пуст</h3></div>';
+            return `
+                <div class="empty">
+                    <div class="empty-icon"><i class="fas fa-box-open"></i></div>
+                    <h3 class="empty-title">Склад пуст</h3>
+                    <p class="empty-text">Добавьте автомобиль с запчастями</p>
+                </div>
+            `;
         }
 
         return `
-            <div class="mb-4" style="overflow-x:auto;">
+            <div class="table-wrapper">
                 <table class="data-table">
                     <thead>
                         <tr>
                             <th>Название</th>
                             <th>Авто</th>
-                            <th>Категория</th>
                             <th>Цена</th>
                             <th>Всего</th>
-                            <th>Забронир.</th>
-                            <th>Доступно</th>
-                            <th>Действия</th>
+                            <th>Брон.</th>
+                            <th>Дост.</th>
+                            <th></th>
                         </tr>
                     </thead>
                     <tbody>
@@ -321,16 +532,19 @@ const Admin = {
                             return `
                                 <tr>
                                     <td><strong>${p.name}</strong></td>
-                                    <td>${p.brand} ${p.model} ${p.year}</td>
-                                    <td>${p.category || '-'}</td>
+                                    <td style="font-size:12px;">${p.brand} ${p.model} ${p.year}</td>
                                     <td>${Utils.formatPrice(p.price)}</td>
                                     <td>${p.quantity || 0}</td>
                                     <td>${reserved > 0 ? `<span class="badge badge-warning">${reserved}</span>` : '-'}</td>
                                     <td><span class="badge ${available > 0 ? 'badge-success' : 'badge-danger'}">${available}</span></td>
                                     <td>
                                         <div class="table-actions">
-                                            <button class="table-btn edit" onclick="Admin.editPart('${p.id}')"><i class="fas fa-edit"></i></button>
-                                            <button class="table-btn delete" onclick="Admin.deletePart('${p.id}')"><i class="fas fa-trash"></i></button>
+                                            <button class="table-btn edit" onclick="Admin.editPart('${p.id}')" title="Редактировать">
+                                                <i class="fas fa-edit"></i>
+                                            </button>
+                                            <button class="table-btn delete" onclick="Admin.deletePart('${p.id}')" title="Удалить">
+                                                <i class="fas fa-trash"></i>
+                                            </button>
                                         </div>
                                     </td>
                                 </tr>
@@ -346,6 +560,8 @@ const Admin = {
         const p = this.inventory.find(x => x.id === id);
         if (!p) return;
 
+        const reserved = p.reserved || 0;
+
         Modal.open({
             title: 'Редактирование',
             size: 'sm',
@@ -358,12 +574,12 @@ const Admin = {
                     <div class="form-row">
                         <div class="form-group">
                             <label class="form-label">Цена</label>
-                            <input type="number" class="form-input" name="price" value="${p.price}" required>
+                            <input type="number" class="form-input" name="price" value="${p.price}" required min="0">
                         </div>
                         <div class="form-group">
                             <label class="form-label">Количество</label>
-                            <input type="number" class="form-input" name="quantity" value="${p.quantity}" required min="${p.reserved || 0}">
-                            <span class="form-hint">Мин: ${p.reserved || 0} (забронировано)</span>
+                            <input type="number" class="form-input" name="quantity" value="${p.quantity}" required min="${reserved}">
+                            ${reserved > 0 ? `<span class="form-hint">Мин: ${reserved} (забронировано)</span>` : ''}
                         </div>
                     </div>
                     <div class="form-group">
@@ -384,13 +600,12 @@ const Admin = {
             e.preventDefault();
             const fd = new FormData(e.target);
             const newQty = parseInt(fd.get('quantity'));
-            const reserved = p.reserved || 0;
-            
+
             if (newQty < reserved) {
-                Utils.toast(`Количество не может быть меньше забронированного (${reserved})`, 'error');
+                Utils.toast(`Нельзя уменьшить ниже ${reserved} (забронировано)`, 'error');
                 return;
             }
-            
+
             try {
                 await db.collection(DB.PARTS).doc(id).update({
                     name: fd.get('name'),
@@ -399,15 +614,17 @@ const Admin = {
                     condition: fd.get('condition'),
                     updatedAt: firebase.firestore.FieldValue.serverTimestamp()
                 });
+
                 Modal.closeAll();
                 Utils.toast('Сохранено', 'success');
+                
                 await Catalog.load();
                 Catalog.applyFilters();
                 Catalog.renderParts();
-                await this.loadData();
-                this.open();
+                
+                await this.refresh();
             } catch (e) {
-                Utils.toast('Ошибка', 'error');
+                Utils.toast('Ошибка: ' + e.message, 'error');
             }
         };
     },
@@ -415,24 +632,31 @@ const Admin = {
     async deletePart(id) {
         const p = this.inventory.find(x => x.id === id);
         if (!p) return;
-        
-        if ((p.reserved || 0) > 0) {
-            Utils.toast('Нельзя удалить товар с активными бронированиями', 'error');
+
+        const reserved = p.reserved || 0;
+        if (reserved > 0) {
+            Utils.toast('Нельзя удалить товар с активными бронями', 'error');
             return;
         }
-        
-        if (!await Modal.confirm({ title: 'Удалить?', message: 'Это действие нельзя отменить', type: 'danger', confirmText: 'Удалить' })) return;
-        
+
+        if (!await Modal.confirm({
+            title: 'Удалить товар?',
+            message: `${p.name} будет удален со склада`,
+            type: 'danger',
+            confirmText: 'Удалить'
+        })) return;
+
         try {
             await db.collection(DB.PARTS).doc(id).delete();
-            Utils.toast('Удалено', 'success');
+            Utils.toast('Товар удален', 'success');
+            
             await Catalog.load();
             Catalog.applyFilters();
             Catalog.renderParts();
-            await this.loadData();
-            this.open();
+            
+            await this.refresh();
         } catch (e) {
-            Utils.toast('Ошибка', 'error');
+            Utils.toast('Ошибка: ' + e.message, 'error');
         }
     },
 
@@ -482,7 +706,7 @@ const Admin = {
             
             <div class="car-form-section">
                 <h3><i class="fas fa-cogs"></i> Запчасти</h3>
-                <p style="font-size:13px;color:var(--gray-500);margin-bottom:12px;">Отметьте запчасти, которые есть на этом автомобиле</p>
+                <p style="font-size:13px;color:var(--gray-500);margin-bottom:12px;">Отметьте имеющиеся запчасти</p>
                 <div class="parts-list" id="parts-list">
                     ${PARTS_LIST.map(p => `
                         <label class="part-check" data-pid="${p.id}">
@@ -497,8 +721,8 @@ const Admin = {
                 <div id="part-forms"></div>
             </div>
             
-            <button class="btn btn-primary btn-lg" style="width:100%;" onclick="Admin.saveCar()" id="save-car-btn">
-                <i class="fas fa-save"></i> Сохранить автомобиль и запчасти
+            <button class="btn btn-primary btn-lg btn-block" onclick="Admin.saveCar()" id="save-car-btn">
+                <i class="fas fa-save"></i> Сохранить
             </button>
         `;
     },
@@ -512,7 +736,8 @@ const Admin = {
                 const b = brand.value;
                 if (b && CAR_BRANDS[b]) {
                     model.disabled = false;
-                    model.innerHTML = `<option value="">Выберите</option>` + CAR_BRANDS[b].map(m => `<option value="${m}">${m}</option>`).join('');
+                    model.innerHTML = `<option value="">Выберите</option>` + 
+                        CAR_BRANDS[b].map(m => `<option value="${m}">${m}</option>`).join('');
                 } else {
                     model.disabled = true;
                     model.innerHTML = '<option value="">Сначала марку</option>';
@@ -561,19 +786,21 @@ const Admin = {
             <div class="part-form" id="pf-${pid}">
                 <div class="part-form-header">
                     <span class="part-form-title"><i class="fas fa-cog"></i> ${part.name}</span>
-                    <button class="btn btn-ghost btn-sm" onclick="Admin.removePartForm('${pid}')"><i class="fas fa-times"></i></button>
+                    <button class="btn btn-ghost btn-sm" onclick="Admin.removePartForm('${pid}')">
+                        <i class="fas fa-times"></i>
+                    </button>
                 </div>
                 ${existing ? `
                     <div style="background:#dbeafe;padding:10px;border-radius:var(--radius);margin-bottom:12px;font-size:13px;">
                         <i class="fas fa-info-circle" style="color:var(--primary)"></i>
-                        <strong>Товар найден:</strong> ${Utils.formatPrice(existing.price)} | ${existing.quantity} шт.
-                        <br><span style="color:var(--gray-500)">При сохранении кол-во увеличится на 1</span>
+                        <strong>Найден на складе:</strong> ${Utils.formatPrice(existing.price)} | ${existing.quantity} шт.
+                        <br><span style="color:var(--gray-500)">Количество увеличится на 1</span>
                     </div>
                 ` : ''}
                 <div class="part-form-grid">
                     <div class="form-group">
                         <label class="form-label required">Цена</label>
-                        <input type="number" class="form-input" id="pp-${pid}" value="${existing?.price || ''}" placeholder="0" required>
+                        <input type="number" class="form-input" id="pp-${pid}" value="${existing?.price || ''}" placeholder="0" required min="0">
                     </div>
                     <div class="form-group">
                         <label class="form-label">Состояние</label>
@@ -664,11 +891,13 @@ const Admin = {
         btn.innerHTML = '<i class="fas fa-spinner fa-spin"></i> Сохранение...';
 
         try {
+            // Сохраняем авто
             const carRef = await db.collection(DB.CARS).add({
                 brand, model, year, bodyType: body, restyling: restyle,
                 createdAt: firebase.firestore.FieldValue.serverTimestamp()
             });
 
+            // Сохраняем запчасти
             for (const [pid, part] of Object.entries(this.selectedParts)) {
                 const price = parseFloat(document.getElementById(`pp-${pid}`).value);
                 const condition = document.getElementById(`pc-${pid}`).value;
@@ -682,11 +911,17 @@ const Admin = {
                 }
 
                 if (part.existingId) {
-                    await db.collection(DB.PARTS).doc(part.existingId).update({
-                        quantity: firebase.firestore.FieldValue.increment(1),
-                        updatedAt: firebase.firestore.FieldValue.serverTimestamp()
-                    });
+                    // Увеличиваем количество существующего
+                    const partRef = db.collection(DB.PARTS).doc(part.existingId);
+                    const partDoc = await partRef.get();
+                    if (partDoc.exists) {
+                        await partRef.update({
+                            quantity: (partDoc.data().quantity || 0) + 1,
+                            updatedAt: firebase.firestore.FieldValue.serverTimestamp()
+                        });
+                    }
                 } else {
+                    // Создаем новый товар
                     await db.collection(DB.PARTS).add({
                         partType: pid,
                         name: part.name,
@@ -702,58 +937,32 @@ const Admin = {
                 }
             }
 
-            Utils.toast('Автомобиль и запчасти добавлены!', 'success');
+            Utils.toast('Сохранено!', 'success');
+            
             await Catalog.load();
             Catalog.applyFilters();
             Catalog.renderParts();
             App.updateStats();
 
+            // Сбрасываем форму
             this.selectedParts = {};
             document.getElementById('sec-add-car').innerHTML = this.renderAddCar();
             this.bindAddCarEvents();
 
         } catch (e) {
-            console.error(e);
-            Utils.toast('Ошибка сохранения', 'error');
+            console.error('Save error:', e);
+            Utils.toast('Ошибка: ' + e.message, 'error');
         } finally {
             btn.disabled = false;
             btn.innerHTML = '<i class="fas fa-save"></i> Сохранить';
         }
     },
 
-    // ==================== SALES ====================
-    renderSales() {
-        const total = this.sales.reduce((s, x) => s + x.total, 0);
-
-        if (!this.sales.length) {
-            return '<div class="empty"><div class="empty-icon"><i class="fas fa-chart-line"></i></div><h3 class="empty-title">Нет продаж</h3></div>';
-        }
-
-        return `
-            <div class="admin-stats">
-                <div class="admin-stat"><div class="admin-stat-value" style="color:var(--success)">${Utils.formatPrice(total)}</div><div class="admin-stat-label">Общая сумма</div></div>
-                <div class="admin-stat"><div class="admin-stat-value">${this.sales.length}</div><div class="admin-stat-label">Всего продаж</div></div>
-            </div>
-            <div style="overflow-x:auto;">
-                <table class="data-table">
-                    <thead>
-                        <tr><th>Заказ</th><th>Клиент</th><th>Дата</th><th>Сумма</th><th></th></tr>
-                    </thead>
-                    <tbody>
-                        ${this.sales.map(s => `
-                            <tr>
-                                <td><strong>${s.orderNumber}</strong></td>
-                                <td>${s.customerName}</td>
-                                <td>${Utils.formatDate(s.completedAt, true)}</td>
-                                <td><strong>${Utils.formatPrice(s.total)}</strong></td>
-                                <td>
-                                    <button class="table-btn print" onclick="Reservations.printReceipt(Admin.sales.find(x=>x.id==='${s.id}'))"><i class="fas fa-print"></i></button>
-                                </td>
-                            </tr>
-                        `).join('')}
-                    </tbody>
-                </table>
-            </div>
-        `;
+    // ==================== REFRESH ====================
+    async refresh() {
+        await this.loadData();
+        document.getElementById('sec-reservations').innerHTML = this.renderReservations();
+        document.getElementById('sec-inventory').innerHTML = this.renderInventory();
+        document.getElementById('sec-history').innerHTML = this.renderHistory();
     }
 };
