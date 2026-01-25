@@ -4,28 +4,27 @@
 const App = {
     async init() {
         this.showLoading();
-        
+
         try {
-            // Проверяем что Firebase инициализирован
             if (typeof firebase === 'undefined') {
                 throw new Error('Firebase SDK not loaded');
             }
-            
+
             if (typeof auth === 'undefined' || typeof db === 'undefined') {
-                throw new Error('Firebase not initialized. Check config.js');
+                throw new Error('Firebase not initialized');
             }
-            
+
             Auth.init();
             Cart.init();
             await Catalog.init();
-            
+
             Auth.subscribe(() => this.render());
-            
+
             this.render();
             this.hideLoading();
-            
-            console.log('App initialized successfully');
-        } catch(e) {
+
+            console.log('App initialized');
+        } catch (e) {
             console.error('Init error:', e);
             this.showError(e.message);
         }
@@ -33,6 +32,7 @@ const App = {
 
     render() {
         this.renderHeader();
+        this.renderMobileNav();
         this.renderHero();
         Catalog.render();
         this.renderAbout();
@@ -52,10 +52,10 @@ const App = {
                 <div class="header-inner">
                     <a href="#" class="logo" onclick="window.scrollTo({top:0,behavior:'smooth'});return false;">
                         <div class="logo-icon"><i class="fas fa-car"></i></div>
-                        <span>АвтоРазбор</span>
+                        <span class="logo-text">АвтоРазбор</span>
                     </a>
                     
-                    <div class="search-box">
+                    <div class="search-box" id="search-box">
                         <input type="text" placeholder="Поиск запчастей..." id="search-input">
                         <button onclick="App.doSearch()"><i class="fas fa-search"></i></button>
                     </div>
@@ -72,10 +72,10 @@ const App = {
                         
                         ${user ? `
                             <div class="user-menu">
-                                <span class="user-name">${userData?.name || user.email}</span>
+                                <span class="user-name">${userData?.name || ''}</span>
                                 ${isAdmin ? `
                                     <button class="btn btn-secondary btn-sm" onclick="Admin.open()">
-                                        <i class="fas fa-cogs"></i> Админ
+                                        <i class="fas fa-cogs"></i>
                                     </button>
                                 ` : ''}
                                 <button class="btn btn-ghost btn-sm" onclick="App.logout()">
@@ -84,10 +84,25 @@ const App = {
                             </div>
                         ` : `
                             <button class="btn btn-secondary" onclick="Auth.showLoginModal()">
-                                <i class="fas fa-user"></i> Войти
+                                <i class="fas fa-user"></i>
+                                <span>Войти</span>
                             </button>
                         `}
                     </nav>
+                    
+                    <!-- Mobile buttons -->
+                    <button class="search-toggle" onclick="App.toggleSearch()">
+                        <i class="fas fa-search"></i>
+                    </button>
+                    
+                    <button class="btn btn-primary cart-btn menu-btn-cart" onclick="Cart.openModal()" style="display:none;">
+                        <i class="fas fa-shopping-cart"></i>
+                        ${cartCount > 0 ? `<span class="cart-badge">${cartCount}</span>` : ''}
+                    </button>
+                    
+                    <button class="menu-btn" onclick="App.toggleMobileNav()">
+                        <i class="fas fa-bars"></i>
+                    </button>
                 </div>
             </header>
         `;
@@ -96,13 +111,136 @@ const App = {
         const searchInput = document.getElementById('search-input');
         if (searchInput) {
             searchInput.onkeypress = (e) => {
-                if (e.key === 'Enter') this.doSearch();
+                if (e.key === 'Enter') {
+                    this.doSearch();
+                    this.toggleSearch();
+                }
             };
+        }
+
+        // Update mobile cart button visibility
+        this.updateMobileUI();
+    },
+
+    renderMobileNav() {
+        const user = Auth.getUser();
+        const userData = Auth.getUserData();
+        const isAdmin = Auth.isAdmin();
+
+        let mobileNav = document.getElementById('mobile-nav');
+        if (!mobileNav) {
+            mobileNav = document.createElement('div');
+            mobileNav.id = 'mobile-nav';
+            mobileNav.className = 'mobile-nav';
+            document.body.appendChild(mobileNav);
+        }
+
+        mobileNav.innerHTML = `
+            <div class="mobile-nav-content">
+                <div class="mobile-nav-header">
+                    <span style="font-weight:600;font-size:16px;">Меню</span>
+                    <button class="mobile-nav-close" onclick="App.toggleMobileNav()">
+                        <i class="fas fa-times"></i>
+                    </button>
+                </div>
+                
+                ${user ? `
+                    <div class="mobile-nav-user">
+                        <div class="mobile-nav-user-name">${userData?.name || 'Пользователь'}</div>
+                        <div class="mobile-nav-user-email">${user.email}</div>
+                    </div>
+                ` : ''}
+                
+                <div class="mobile-nav-links">
+                    <a href="#catalog" class="mobile-nav-link" onclick="App.toggleMobileNav()">
+                        <i class="fas fa-th-large"></i>
+                        Каталог
+                    </a>
+                    <a href="#about" class="mobile-nav-link" onclick="App.toggleMobileNav()">
+                        <i class="fas fa-info-circle"></i>
+                        О нас
+                    </a>
+                    <a href="#contacts" class="mobile-nav-link" onclick="App.toggleMobileNav()">
+                        <i class="fas fa-phone"></i>
+                        Контакты
+                    </a>
+                    
+                    <div class="mobile-nav-divider"></div>
+                    
+                    <a href="#" class="mobile-nav-link" onclick="App.toggleMobileNav();Cart.openModal();">
+                        <i class="fas fa-shopping-cart"></i>
+                        Корзина
+                        ${Cart.getCount() > 0 ? `<span class="badge badge-danger" style="margin-left:auto;">${Cart.getCount()}</span>` : ''}
+                    </a>
+                    
+                    ${user ? `
+                        ${isAdmin ? `
+                            <a href="#" class="mobile-nav-link" onclick="App.toggleMobileNav();Admin.open();">
+                                <i class="fas fa-cogs"></i>
+                                Админ-панель
+                            </a>
+                        ` : ''}
+                        <div class="mobile-nav-divider"></div>
+                        <a href="#" class="mobile-nav-link" onclick="App.toggleMobileNav();App.logout();">
+                            <i class="fas fa-sign-out-alt"></i>
+                            Выйти
+                        </a>
+                    ` : `
+                        <div class="mobile-nav-divider"></div>
+                        <a href="#" class="mobile-nav-link" onclick="App.toggleMobileNav();Auth.showLoginModal();">
+                            <i class="fas fa-sign-in-alt"></i>
+                            Войти
+                        </a>
+                        <a href="#" class="mobile-nav-link" onclick="App.toggleMobileNav();Auth.showRegisterModal();">
+                            <i class="fas fa-user-plus"></i>
+                            Регистрация
+                        </a>
+                    `}
+                </div>
+            </div>
+        `;
+
+        // Close on backdrop click
+        mobileNav.onclick = (e) => {
+            if (e.target === mobileNav) {
+                this.toggleMobileNav();
+            }
+        };
+    },
+
+    toggleMobileNav() {
+        const nav = document.getElementById('mobile-nav');
+        if (nav) {
+            nav.classList.toggle('active');
+            document.body.style.overflow = nav.classList.contains('active') ? 'hidden' : '';
         }
     },
 
+    toggleSearch() {
+        const searchBox = document.getElementById('search-box');
+        if (searchBox) {
+            searchBox.classList.toggle('active');
+            if (searchBox.classList.contains('active')) {
+                searchBox.querySelector('input').focus();
+            }
+        }
+    },
+
+    updateMobileUI() {
+        // Show/hide mobile cart button based on screen size
+        const style = document.createElement('style');
+        style.textContent = `
+            @media (max-width: 767px) {
+                .menu-btn-cart { display: flex !important; }
+                .nav .cart-btn { display: none !important; }
+            }
+        `;
+        document.head.appendChild(style);
+    },
+
     doSearch() {
-        const q = document.getElementById('search-input').value.trim();
+        const input = document.getElementById('search-input');
+        const q = input ? input.value.trim() : '';
         if (q) {
             Catalog.search(q);
             document.getElementById('catalog').scrollIntoView({ behavior: 'smooth' });
@@ -110,22 +248,24 @@ const App = {
     },
 
     updateCartBadge() {
-        const btn = document.querySelector('.cart-btn');
-        if (!btn) return;
-        
-        const count = Cart.getCount();
-        let badge = btn.querySelector('.cart-badge');
-        
-        if (count > 0) {
-            if (!badge) {
-                badge = document.createElement('span');
-                badge.className = 'cart-badge';
-                btn.appendChild(badge);
+        document.querySelectorAll('.cart-btn').forEach(btn => {
+            const count = Cart.getCount();
+            let badge = btn.querySelector('.cart-badge');
+
+            if (count > 0) {
+                if (!badge) {
+                    badge = document.createElement('span');
+                    badge.className = 'cart-badge';
+                    btn.appendChild(badge);
+                }
+                badge.textContent = count;
+            } else if (badge) {
+                badge.remove();
             }
-            badge.textContent = count;
-        } else if (badge) {
-            badge.remove();
-        }
+        });
+
+        // Update mobile nav
+        this.renderMobileNav();
     },
 
     async logout() {
@@ -181,7 +321,7 @@ const App = {
             const carsSnap = await db.collection(DB.CARS).get();
             const carsEl = document.getElementById('stat-cars');
             if (carsEl) carsEl.textContent = carsSnap.size;
-        } catch(e) {
+        } catch (e) {
             console.error('Stats error:', e);
         }
     },
@@ -235,7 +375,7 @@ const App = {
                             <h3><i class="fas fa-phone" style="color:var(--primary)"></i> Связь</h3>
                             <div class="contact-row"><i class="fas fa-phone"></i> +7 (999) 999-99-99</div>
                             <div class="contact-row"><i class="fas fa-envelope"></i> info@autorazbor.ru</div>
-                            <div style="display:flex;gap:8px;margin-top:12px;">
+                            <div style="display:flex;gap:8px;margin-top:12px;flex-wrap:wrap;">
                                 <a href="#" class="btn btn-ghost btn-sm"><i class="fab fa-whatsapp"></i> WhatsApp</a>
                                 <a href="#" class="btn btn-ghost btn-sm"><i class="fab fa-telegram"></i> Telegram</a>
                             </div>
@@ -283,14 +423,14 @@ const App = {
             <div class="loading">
                 <i class="fas fa-exclamation-triangle" style="font-size:48px;color:var(--danger);margin-bottom:16px;"></i>
                 <h2>Ошибка загрузки</h2>
-                <p style="color:var(--gray-500);margin:16px 0;">${message}</p>
+                <p style="color:var(--gray-500);margin:16px 0;text-align:center;padding:0 20px;">${message}</p>
                 <button class="btn btn-primary" onclick="location.reload()">Обновить</button>
             </div>
         `;
     }
 };
 
-// Start app when DOM ready
+// Start
 document.addEventListener('DOMContentLoaded', () => {
     App.init();
 });
