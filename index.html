@@ -1,629 +1,705 @@
 <!DOCTYPE html>
 <html lang="ru">
+
 <head>
-  <meta charset="UTF-8" />
-  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-  <title>AutoParts | Б/У и новые автозапчасти</title>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>AutoParts | Б/У и новые автозапчасти</title>
 
-  <link rel="preconnect" href="https://fonts.googleapis.com" />
-  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
-  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet" />
+    <link rel="preconnect" href="https://fonts.googleapis.com" />
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet" />
 
-  <link rel="stylesheet" href="css/styles.css" />
+    <link rel="stylesheet" href="css/styles.css" />
 </head>
 
 <body>
-  <!-- Header -->
-  <header class="header">
-    <div class="container header__inner">
-      <a href="#" class="logo" data-navigate="home" aria-label="На главную">
-        <span class="logo__icon">🔧</span>
-        <span class="logo__text">Auto<span class="logo__accent">Parts</span></span>
-      </a>
+    <!-- Header -->
+    <header class="header">
+        <div class="container header__inner">
+            <a href="#" class="logo" data-navigate="home" aria-label="На главную">
+                <span class="logo__icon">🔧</span>
+                <span class="logo__text">Auto<span class="logo__accent">Parts</span></span>
+            </a>
 
-      <div class="search-box" role="search">
-        <input type="text" class="search-box__input" id="globalSearch" placeholder="Поиск запчастей..." autocomplete="off" />
-        <button class="search-box__btn" id="searchBtn" type="button" aria-label="Искать">
-          <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
-            <circle cx="11" cy="11" r="8"></circle>
-            <path d="m21 21-4.35-4.35"></path>
-          </svg>
-        </button>
-      </div>
-
-      <nav class="header__nav" aria-label="Навигация">
-        <!-- Админка отдельной кнопкой (показывается только админу) -->
-        <button class="nav-btn hidden" id="adminBtn" type="button" aria-label="Админ панель">
-          <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
-            <path d="M12 2l3 7h7l-5.5 4.5L18 21l-6-3.8L6 21l1.5-7.5L2 9h7z"></path>
-          </svg>
-          <span class="nav-btn__text">Админка</span>
-        </button>
-
-        <button class="nav-btn" id="cartBtn" type="button" aria-label="Корзина">
-          <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
-            <circle cx="9" cy="21" r="1"></circle>
-            <circle cx="20" cy="21" r="1"></circle>
-            <path d="M1 1h4l2.68 13.39a2 2 0 0 0 2 1.61h9.72a2 2 0 0 0 2-1.61L23 6H6"></path>
-          </svg>
-          <span class="nav-btn__badge" id="cartCount">0</span>
-        </button>
-
-        <button class="nav-btn nav-btn--profile" id="profileBtn" type="button" aria-label="Профиль">
-          <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
-            <path d="M20 21v-2a4 4 0 0 0-4-4H8a4 4 0 0 0-4 4v2"></path>
-            <circle cx="12" cy="7" r="4"></circle>
-          </svg>
-          <span class="nav-btn__text" id="profileText">Войти</span>
-        </button>
-      </nav>
-
-      <button class="mobile-menu-btn" id="mobileMenuBtn" type="button" aria-label="Меню">
-        <span></span><span></span><span></span>
-      </button>
-    </div>
-  </header>
-
-  <main class="main">
-    <!-- Hero -->
-    <section class="hero" id="heroSection">
-      <div class="container">
-        <div class="hero__content">
-          <h1 class="hero__title">Автозапчасти <span class="hero__accent">с гарантией качества</span></h1>
-          <p class="hero__subtitle">
-            Б/У и новые запчасти для любых марок автомобилей. Бронируйте онлайн — забирайте в удобное время.
-          </p>
-          <div class="hero__actions">
-            <button class="btn btn--primary btn--lg" type="button" data-navigate="catalog">Перейти в каталог</button>
-            <a class="btn btn--outline btn--lg" href="#footer">Контакты</a>
-          </div>
-        </div>
-
-        <div class="hero__stats">
-          <div class="stat-card">
-            <span class="stat-card__value" id="statParts">0</span>
-            <span class="stat-card__label">Запчастей в наличии</span>
-          </div>
-          <div class="stat-card">
-            <span class="stat-card__value" id="statOrders">0</span>
-            <span class="stat-card__label">Выполненных заказов</span>
-          </div>
-          <div class="stat-card">
-            <span class="stat-card__value">5+</span>
-            <span class="stat-card__label">Лет на рынке</span>
-          </div>
-        </div>
-      </div>
-    </section>
-
-    <!-- Catalog -->
-    <section class="catalog" id="catalogSection">
-      <div class="container">
-        <h2 class="section-title">Каталог запчастей</h2>
-
-        <div class="filters">
-          <div class="filters__row">
-            <div class="filter-group">
-              <label class="filter-label" for="filterMake">Марка</label>
-              <select class="filter-select" id="filterMake">
-                <option value="">Все марки</option>
-              </select>
-            </div>
-
-            <div class="filter-group">
-              <label class="filter-label" for="filterModel">Модель</label>
-              <select class="filter-select" id="filterModel" disabled>
-                <option value="">Выберите марку</option>
-              </select>
-            </div>
-
-            <div class="filter-group">
-              <label class="filter-label" for="filterPart">Запчасть</label>
-              <select class="filter-select" id="filterPart">
-                <option value="">Все запчасти</option>
-              </select>
-            </div>
-
-            <div class="filter-group">
-              <label class="filter-label" for="filterCondition">Состояние</label>
-              <select class="filter-select" id="filterCondition">
-                <option value="">Любое</option>
-                <option value="new">Новое</option>
-                <option value="used">Б/У</option>
-              </select>
-            </div>
-          </div>
-
-          <div class="filters__row filters__row--actions">
-            <div class="filter-group">
-              <label class="filter-label" for="sortSelect">Сортировка</label>
-              <select class="filter-select" id="sortSelect">
-                <option value="newest">Новые поступления</option>
-                <option value="price_asc">Сначала дешевые</option>
-                <option value="price_desc">Сначала дорогие</option>
-                <option value="name_asc">По названию (А-Я)</option>
-              </select>
-            </div>
-
-            <button class="btn btn--secondary" id="resetFilters" type="button">Сбросить фильтры</button>
-          </div>
-        </div>
-
-        <div class="products-grid" id="productsGrid"></div>
-
-        <div class="loading-state" id="loadingState">
-          <div class="spinner"></div>
-          <p>Загрузка товаров...</p>
-        </div>
-
-        <div class="empty-state hidden" id="emptyState">
-          <svg width="64" height="64" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5">
-            <circle cx="12" cy="12" r="10"></circle>
-            <path d="M8 15h8M9 9h.01M15 9h.01"></path>
-          </svg>
-          <h3>Ничего не найдено</h3>
-          <p>Попробуйте изменить параметры поиска</p>
-        </div>
-
-        <div class="pagination" id="pagination"></div>
-      </div>
-    </section>
-
-    <!-- Admin -->
-    <section class="admin-section hidden" id="adminSection">
-      <div class="container">
-        <div class="admin-header">
-          <h2 class="section-title">Панель администратора</h2>
-
-          <div class="admin-tabs" role="tablist" aria-label="Админ панель вкладки">
-            <button class="admin-tab active" type="button" data-tab="addCar">Добавить авто</button>
-            <button class="admin-tab" type="button" data-tab="inventory">Склад</button>
-            <button class="admin-tab" type="button" data-tab="orders">Брони</button>
-            <button class="admin-tab" type="button" data-tab="sales">Продажи</button>
-            <button class="admin-tab" type="button" data-tab="cars">Авто</button>
-          </div>
-        </div>
-
-        <!-- Add Car -->
-        <div class="admin-content" id="tabAddCar">
-          <div class="add-car-wizard">
-            <div class="wizard-steps">
-              <div class="wizard-step active" data-step="1">
-                <span class="wizard-step__number">1</span>
-                <span class="wizard-step__label">Данные авто</span>
-              </div>
-              <div class="wizard-step" data-step="2">
-                <span class="wizard-step__number">2</span>
-                <span class="wizard-step__label">Выбор запчастей</span>
-              </div>
-              <div class="wizard-step" data-step="3">
-                <span class="wizard-step__number">3</span>
-                <span class="wizard-step__label">Детализация</span>
-              </div>
-            </div>
-
-            <div class="wizard-panel active" id="wizardStep1">
-              <h3 class="wizard-panel__title">Информация об автомобиле</h3>
-
-              <form class="car-form" id="carInfoForm">
-                <div class="form-row">
-                  <div class="form-group">
-                    <label class="form-label" for="carMake">Марка *</label>
-                    <select class="form-select" id="carMake" required>
-                      <option value="">Выберите марку</option>
-                    </select>
-                  </div>
-
-                  <div class="form-group">
-                    <label class="form-label" for="carModel">Модель *</label>
-                    <input type="text" class="form-input" id="carModel" placeholder="Например: Camry" required />
-                  </div>
-                </div>
-
-                <div class="form-row">
-                  <div class="form-group">
-                    <label class="form-label" for="carYear">Год выпуска *</label>
-                    <input type="number" class="form-input" id="carYear" min="1970" max="2026" required />
-                  </div>
-
-                  <div class="form-group">
-                    <label class="form-label" for="carBody">Тип кузова *</label>
-                    <select class="form-select" id="carBody" required>
-                      <option value="">Выберите тип</option>
-                      <option value="sedan">Седан</option>
-                      <option value="hatchback">Хэтчбек</option>
-                      <option value="wagon">Универсал</option>
-                      <option value="suv">Внедорожник</option>
-                      <option value="crossover">Кроссовер</option>
-                      <option value="coupe">Купе</option>
-                      <option value="minivan">Минивен</option>
-                      <option value="pickup">Пикап</option>
-                    </select>
-                  </div>
-                </div>
-
-                <div class="form-row">
-                  <div class="form-group form-group--checkbox">
-                    <label class="checkbox-label" for="carRestyling">
-                      <input type="checkbox" id="carRestyling" />
-                      <span class="checkbox-custom"></span>
-                      Рестайлинг
-                    </label>
-                  </div>
-                </div>
-
-                <div class="form-actions">
-                  <button type="submit" class="btn btn--primary">Далее →</button>
-                </div>
-              </form>
-            </div>
-
-            <div class="wizard-panel" id="wizardStep2">
-              <h3 class="wizard-panel__title">Выберите доступные запчасти</h3>
-
-              <div class="parts-selection">
-                <div class="parts-search">
-                  <input type="text" class="form-input" id="partsSearch" placeholder="Поиск запчастей..." />
-                </div>
-                <div class="parts-categories" id="partsCategories"></div>
-              </div>
-
-              <div class="selected-count">
-                Выбрано: <span id="selectedPartsCount">0</span> запчастей
-              </div>
-
-              <div class="form-actions">
-                <button type="button" class="btn btn--secondary" id="wizardBack1">← Назад</button>
-                <button type="button" class="btn btn--primary" id="wizardNext2" disabled>Далее →</button>
-              </div>
-            </div>
-
-            <div class="wizard-panel" id="wizardStep3">
-              <h3 class="wizard-panel__title">Укажите детали для каждой запчасти</h3>
-
-              <div class="parts-details" id="partsDetails"></div>
-
-              <div class="form-actions">
-                <button type="button" class="btn btn--secondary" id="wizardBack2">← Назад</button>
-                <button type="button" class="btn btn--success" id="saveParts">
-                  <span class="btn__text">Сохранить всё</span>
-                  <span class="btn__loader hidden"></span>
+            <div class="search-box" role="search">
+                <input type="text" class="search-box__input" id="globalSearch" placeholder="Поиск запчастей..."
+                    autocomplete="off" />
+                <button class="search-box__btn" id="searchBtn" type="button" aria-label="Искать">
+                    <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                        <circle cx="11" cy="11" r="8"></circle>
+                        <path d="m21 21-4.35-4.35"></path>
+                    </svg>
                 </button>
-              </div>
-            </div>
-          </div>
-        </div>
-
-        <!-- Inventory -->
-        <div class="admin-content hidden" id="tabInventory">
-          <div class="inventory-controls">
-            <input type="text" class="form-input" id="inventorySearch" placeholder="Поиск по складу..." />
-            <select class="form-select" id="inventorySort">
-              <option value="stock_asc">По количеству (возр.)</option>
-              <option value="stock_desc">По количеству (убыв.)</option>
-              <option value="name_asc">По названию</option>
-              <option value="price_asc">По цене (возр.)</option>
-            </select>
-          </div>
-
-          <div class="inventory-table-wrapper">
-            <table class="inventory-table" id="inventoryTable">
-              <thead>
-                <tr>
-                  <th>Фото</th>
-                  <th>Запчасть</th>
-                  <th>Авто</th>
-                  <th>Состояние</th>
-                  <th>Цена</th>
-                  <th>Кол-во</th>
-                  <th>Действия</th>
-                </tr>
-              </thead>
-              <tbody id="inventoryBody"></tbody>
-            </table>
-          </div>
-        </div>
-
-        <!-- Orders -->
-        <div class="admin-content hidden" id="tabOrders">
-          <div class="orders-list" id="ordersList"></div>
-        </div>
-
-        <!-- Sales -->
-        <div class="admin-content hidden" id="tabSales">
-          <div class="sales-list" id="salesList"></div>
-        </div>
-
-        <!-- Cars (красивая сетка) -->
-        <div class="admin-content hidden" id="tabCars">
-          <div class="cars-toolbar">
-            <input type="text" class="form-input" id="carsSearch" placeholder="Поиск по авто (марка/модель/год/кузов)..." />
-            <select class="form-select" id="carsSort">
-              <option value="updated_desc">Сначала новые (по обновлению склада)</option>
-              <option value="name_asc">По названию (А-Я)</option>
-              <option value="parts_desc">По количеству позиций</option>
-            </select>
-          </div>
-          <div class="car-grid" id="carsList"></div>
-        </div>
-      </div>
-    </section>
-
-    <!-- Profile -->
-    <section class="profile-section hidden" id="profileSection">
-      <div class="container">
-        <h2 class="section-title">Личный кабинет</h2>
-
-        <div class="profile-content">
-          <div class="profile-info">
-            <div class="profile-avatar" aria-hidden="true">
-              <svg width="48" height="48" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5">
-                <path d="M20 21v-2a4 4 0 0 0-4-4H8a4 4 0 0 0-4 4v2"></path>
-                <circle cx="12" cy="7" r="4"></circle>
-              </svg>
             </div>
 
-            <div class="profile-data">
-              <h3 id="profileEmail">user@example.com</h3>
-              <div class="muted" id="profileName">—</div>
-              <span class="profile-role" id="profileRole">Клиент</span>
+            <nav class="header__nav" aria-label="Навигация">
+                <!-- Админка отдельной кнопкой (показывается только админу) -->
+                <button class="nav-btn hidden" id="adminBtn" type="button" aria-label="Админ панель">
+                    <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                        <path d="M12 2l3 7h7l-5.5 4.5L18 21l-6-3.8L6 21l1.5-7.5L2 9h7z"></path>
+                    </svg>
+                    <span class="nav-btn__text">Админка</span>
+                </button>
+
+                <button class="nav-btn" id="cartBtn" type="button" aria-label="Корзина">
+                    <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                        <circle cx="9" cy="21" r="1"></circle>
+                        <circle cx="20" cy="21" r="1"></circle>
+                        <path d="M1 1h4l2.68 13.39a2 2 0 0 0 2 1.61h9.72a2 2 0 0 0 2-1.61L23 6H6"></path>
+                    </svg>
+                    <span class="nav-btn__badge" id="cartCount">0</span>
+                </button>
+
+                <button class="nav-btn nav-btn--profile" id="profileBtn" type="button" aria-label="Профиль">
+                    <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                        <path d="M20 21v-2a4 4 0 0 0-4-4H8a4 4 0 0 0-4 4v2"></path>
+                        <circle cx="12" cy="7" r="4"></circle>
+                    </svg>
+                    <span class="nav-btn__text" id="profileText">Войти</span>
+                </button>
+            </nav>
+
+            <button class="mobile-menu-btn" id="mobileMenuBtn" type="button" aria-label="Меню">
+                <span></span><span></span><span></span>
+            </button>
+        </div>
+    </header>
+
+    <main class="main">
+        <!-- Hero -->
+        <section class="hero" id="heroSection">
+            <div class="container">
+                <div class="hero__content">
+                    <h1 class="hero__title">Автозапчасти <span class="hero__accent">с гарантией качества</span></h1>
+                    <p class="hero__subtitle">
+                        Б/У и новые запчасти для любых марок автомобилей. Бронируйте онлайн — забирайте в удобное время.
+                    </p>
+                    <div class="hero__actions">
+                        <button class="btn btn--primary btn--lg" type="button" data-navigate="catalog">Перейти в
+                            каталог</button>
+                        <a class="btn btn--outline btn--lg" href="#footer">Контакты</a>
+                    </div>
+                </div>
+
+                <div class="hero__stats">
+                    <div class="stat-card">
+                        <span class="stat-card__value" id="statParts">0</span>
+                        <span class="stat-card__label">Запчастей в наличии</span>
+                    </div>
+                    <div class="stat-card">
+                        <span class="stat-card__value" id="statOrders">0</span>
+                        <span class="stat-card__label">Выполненных заказов</span>
+                    </div>
+                    <div class="stat-card">
+                        <span class="stat-card__value">5+</span>
+                        <span class="stat-card__label">Лет на рынке</span>
+                    </div>
+                </div>
+            </div>
+        </section>
+
+        <!-- Catalog -->
+        <section class="catalog" id="catalogSection">
+            <div class="container">
+                <h2 class="section-title">Каталог запчастей</h2>
+
+                <div class="filters">
+                    <div class="filters__row">
+                        <div class="filter-group">
+                            <label class="filter-label" for="filterMake">Марка</label>
+                            <select class="filter-select" id="filterMake">
+                                <option value="">Все марки</option>
+                            </select>
+                        </div>
+
+                        <div class="filter-group">
+                            <label class="filter-label" for="filterModel">Модель</label>
+                            <select class="filter-select" id="filterModel" disabled>
+                                <option value="">Выберите марку</option>
+                            </select>
+                        </div>
+
+                        <div class="filter-group">
+                            <label class="filter-label" for="filterPart">Запчасть</label>
+                            <select class="filter-select" id="filterPart">
+                                <option value="">Все запчасти</option>
+                            </select>
+                        </div>
+
+                        <div class="filter-group">
+                            <label class="filter-label" for="filterCondition">Состояние</label>
+                            <select class="filter-select" id="filterCondition">
+                                <option value="">Любое</option>
+                                <option value="new">Новое</option>
+                                <option value="used">Б/У</option>
+                            </select>
+                        </div>
+                    </div>
+
+                    <div class="filters__row filters__row--actions">
+                        <div class="filter-group">
+                            <label class="filter-label" for="sortSelect">Сортировка</label>
+                            <select class="filter-select" id="sortSelect">
+                                <option value="newest">Новые поступления</option>
+                                <option value="price_asc">Сначала дешевые</option>
+                                <option value="price_desc">Сначала дорогие</option>
+                                <option value="name_asc">По названию (А-Я)</option>
+                            </select>
+                        </div>
+
+                        <button class="btn btn--secondary" id="resetFilters" type="button">Сбросить фильтры</button>
+                    </div>
+                </div>
+
+                <div class="products-grid" id="productsGrid"></div>
+
+                <div class="loading-state" id="loadingState">
+                    <div class="spinner"></div>
+                    <p>Загрузка товаров...</p>
+                </div>
+
+                <div class="empty-state hidden" id="emptyState">
+                    <svg width="64" height="64" viewBox="0 0 24 24" fill="none" stroke="currentColor"
+                        stroke-width="1.5">
+                        <circle cx="12" cy="12" r="10"></circle>
+                        <path d="M8 15h8M9 9h.01M15 9h.01"></path>
+                    </svg>
+                    <h3>Ничего не найдено</h3>
+                    <p>Попробуйте изменить параметры поиска</p>
+                </div>
+
+                <div class="pagination" id="pagination"></div>
+            </div>
+        </section>
+
+        <!-- Admin -->
+        <section class="admin-section hidden" id="adminSection">
+            <div class="container">
+                <div class="admin-header">
+                    <h2 class="section-title">Панель администратора</h2>
+
+                    <div class="admin-tabs" role="tablist" aria-label="Админ панель вкладки">
+                        <button class="admin-tab active" type="button" data-tab="addCar">Добавить авто</button>
+                        <button class="admin-tab" type="button" data-tab="inventory">Склад</button>
+                        <button class="admin-tab" type="button" data-tab="orders">Брони</button>
+                        <button class="admin-tab" type="button" data-tab="sales">Продажи</button>
+                        <button class="admin-tab" type="button" data-tab="cars">Авто</button>
+                    </div>
+                </div>
+
+                <!-- Add Car -->
+                <div class="admin-content" id="tabAddCar">
+                    <div class="add-car-wizard">
+                        <div class="wizard-steps">
+                            <div class="wizard-step active" data-step="1">
+                                <span class="wizard-step__number">1</span>
+                                <span class="wizard-step__label">Данные авто</span>
+                            </div>
+                            <div class="wizard-step" data-step="2">
+                                <span class="wizard-step__number">2</span>
+                                <span class="wizard-step__label">Выбор запчастей</span>
+                            </div>
+                            <div class="wizard-step" data-step="3">
+                                <span class="wizard-step__number">3</span>
+                                <span class="wizard-step__label">Детализация</span>
+                            </div>
+                        </div>
+
+                        <div class="wizard-panel active" id="wizardStep1">
+                            <h3 class="wizard-panel__title">Информация об автомобиле</h3>
+
+                            <form class="car-form" id="carInfoForm">
+                                <div class="form-row">
+                                    <div class="form-group">
+                                        <label class="form-label" for="carMake">Марка *</label>
+                                        <select class="form-select" id="carMake" required>
+                                            <option value="">Выберите марку</option>
+                                        </select>
+                                    </div>
+
+                                    <div class="form-group">
+                                        <label class="form-label" for="carModel">Модель *</label>
+                                        <input type="text" class="form-input" id="carModel"
+                                            placeholder="Например: Camry" required />
+                                    </div>
+                                </div>
+
+                                <div class="form-row">
+                                    <div class="form-group">
+                                        <label class="form-label" for="carYear">Год выпуска *</label>
+                                        <input type="number" class="form-input" id="carYear" min="1970" max="2026"
+                                            required />
+                                    </div>
+
+                                    <div class="form-group">
+                                        <label class="form-label" for="carBody">Тип кузова *</label>
+                                        <select class="form-select" id="carBody" required>
+                                            <option value="">Выберите тип</option>
+                                            <option value="sedan">Седан</option>
+                                            <option value="hatchback">Хэтчбек</option>
+                                            <option value="wagon">Универсал</option>
+                                            <option value="suv">Внедорожник</option>
+                                            <option value="crossover">Кроссовер</option>
+                                            <option value="coupe">Купе</option>
+                                            <option value="minivan">Минивен</option>
+                                            <option value="pickup">Пикап</option>
+                                        </select>
+                                    </div>
+                                </div>
+
+                                <div class="form-row">
+                                    <div class="form-group form-group--checkbox">
+                                        <label class="checkbox-label" for="carRestyling">
+                                            <input type="checkbox" id="carRestyling" />
+                                            <span class="checkbox-custom"></span>
+                                            Рестайлинг
+                                        </label>
+                                    </div>
+                                </div>
+
+                                <div class="form-actions">
+                                    <button type="submit" class="btn btn--primary">Далее →</button>
+                                </div>
+                            </form>
+                        </div>
+
+                        <div class="wizard-panel" id="wizardStep2">
+                            <h3 class="wizard-panel__title">Выберите доступные запчасти</h3>
+
+                            <div class="parts-selection">
+                                <div class="parts-search">
+                                    <input type="text" class="form-input" id="partsSearch"
+                                        placeholder="Поиск запчастей..." />
+                                </div>
+                                <div class="parts-categories" id="partsCategories"></div>
+                            </div>
+
+                            <div class="selected-count">
+                                Выбрано: <span id="selectedPartsCount">0</span> запчастей
+                            </div>
+
+                            <div class="form-actions">
+                                <button type="button" class="btn btn--secondary" id="wizardBack1">← Назад</button>
+                                <button type="button" class="btn btn--primary" id="wizardNext2" disabled>Далее
+                                    →</button>
+                            </div>
+                        </div>
+
+                        <div class="wizard-panel" id="wizardStep3">
+                            <h3 class="wizard-panel__title">Укажите детали для каждой запчасти</h3>
+
+                            <div class="parts-details" id="partsDetails"></div>
+
+                            <div class="form-actions">
+                                <button type="button" class="btn btn--secondary" id="wizardBack2">← Назад</button>
+                                <button type="button" class="btn btn--success" id="saveParts">
+                                    <span class="btn__text">Сохранить всё</span>
+                                    <span class="btn__loader hidden"></span>
+                                </button>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+
+                <!-- Inventory -->
+                <div class="admin-content hidden" id="tabInventory">
+                    <div class="inventory-controls">
+                        <input type="text" class="form-input" id="inventorySearch" placeholder="Поиск по складу...">
+                        <select class="form-select" id="inventorySort">
+                            <option value="stock_asc">По количеству (возр.)</option>
+                            <option value="stock_desc">По количеству (убыв.)</option>
+                            <option value="name_asc">По названию</option>
+                            <option value="price_asc">По цене (возр.)</option>
+                        </select>
+                    </div>
+
+                    <!-- Bulk action bar -->
+                    <div class="inventory-bulkbar hidden" id="inventoryBulkBar">
+                        <div class="inventory-bulkbar__left">
+                            Выбрано: <strong id="bulkSelectedCount">0</strong>
+                        </div>
+                        <div class="inventory-bulkbar__right">
+                            <button class="btn btn--secondary btn--sm" type="button" id="bulkEditBtn">Массовое
+                                редактирование</button>
+                            <button class="btn btn--danger btn--sm" type="button" id="bulkDeleteBtn">Удалить
+                                выбранные</button>
+                        </div>
+                    </div>
+
+                    <div class="inventory-table-wrapper">
+                        <table class="inventory-table" id="inventoryTable">
+                            <thead>
+                                <tr>
+                                    <th style="width: 44px;">
+                                        <input type="checkbox" id="inventorySelectAll" class="inv-select-all">
+                                    </th>
+                                    <th>Фото</th>
+                                    <th>Запчасть</th>
+                                    <th>Авто</th>
+                                    <th>Состояние</th>
+                                    <th>Цена</th>
+                                    <th>Кол-во</th>
+                                    <th>Действия</th>
+                                </tr>
+                            </thead>
+                            <tbody id="inventoryBody"></tbody>
+                        </table>
+                    </div>
+                </div>
+
+                <!-- Orders -->
+                <div class="admin-content hidden" id="tabOrders">
+                    <div class="orders-list" id="ordersList"></div>
+                </div>
+
+                <!-- Sales -->
+                <div class="admin-content hidden" id="tabSales">
+                    <div class="sales-list" id="salesList"></div>
+                </div>
+
+                <!-- Cars (красивая сетка) -->
+                <div class="admin-content hidden" id="tabCars">
+                    <div class="cars-toolbar">
+                        <input type="text" class="form-input" id="carsSearch"
+                            placeholder="Поиск по авто (марка/модель/год/кузов)..." />
+                        <select class="form-select" id="carsSort">
+                            <option value="updated_desc">Сначала новые (по обновлению склада)</option>
+                            <option value="name_asc">По названию (А-Я)</option>
+                            <option value="parts_desc">По количеству позиций</option>
+                        </select>
+                    </div>
+                    <div class="car-grid" id="carsList"></div>
+                </div>
+            </div>
+        </section>
+
+        <!-- Profile -->
+        <section class="profile-section hidden" id="profileSection">
+            <div class="container">
+                <h2 class="section-title">Личный кабинет</h2>
+
+                <div class="profile-content">
+                    <div class="profile-info">
+                        <div class="profile-avatar" aria-hidden="true">
+                            <svg width="48" height="48" viewBox="0 0 24 24" fill="none" stroke="currentColor"
+                                stroke-width="1.5">
+                                <path d="M20 21v-2a4 4 0 0 0-4-4H8a4 4 0 0 0-4 4v2"></path>
+                                <circle cx="12" cy="7" r="4"></circle>
+                            </svg>
+                        </div>
+
+                        <div class="profile-data">
+                            <h3 id="profileEmail">user@example.com</h3>
+                            <div class="muted" id="profileName">—</div>
+                            <span class="profile-role" id="profileRole">Клиент</span>
+                        </div>
+
+                        <button class="btn btn--secondary" id="logoutBtn" type="button">Выйти</button>
+                    </div>
+
+                    <div class="profile-orders">
+                        <h3>Мои бронирования</h3>
+                        <div class="user-orders" id="userOrders"></div>
+                    </div>
+                </div>
+            </div>
+        </section>
+    </main>
+
+    <!-- Footer -->
+    <footer class="footer" id="footer">
+        <div class="container">
+            <div class="footer__grid">
+                <div class="footer__col">
+                    <a href="#" class="logo" data-navigate="home">
+                        <span class="logo__icon">🔧</span>
+                        <span class="logo__text">Auto<span class="logo__accent">Parts</span></span>
+                    </a>
+                    <p class="footer__desc">Качественные автозапчасти для вашего автомобиля. Работаем с 2019 года.</p>
+                </div>
+
+                <div class="footer__col">
+                    <h4 class="footer__title">Контакты</h4>
+                    <ul class="footer__list">
+                        <li><a href="tel:+79001234567">+7 (900) 123-45-67</a></li>
+                        <li><a href="mailto:info@autoparts.ru">info@autoparts.ru</a></li>
+                        <li>г. Москва, ул. Автозаводская, 1</li>
+                    </ul>
+                </div>
+
+                <div class="footer__col">
+                    <h4 class="footer__title">Режим работы</h4>
+                    <ul class="footer__list">
+                        <li>Пн–Пт: 9:00 – 20:00</li>
+                        <li>Сб: 10:00 – 18:00</li>
+                        <li>Вс: выходной</li>
+                    </ul>
+                </div>
+
+                <div class="footer__col">
+                    <h4 class="footer__title">Мы в соцсетях</h4>
+                    <div class="social-links">
+                        <a href="#" class="social-link" aria-label="VK">VK</a>
+                        <a href="#" class="social-link" aria-label="Telegram">TG</a>
+                        <a href="#" class="social-link" aria-label="WhatsApp">WA</a>
+                    </div>
+                </div>
             </div>
 
-            <button class="btn btn--secondary" id="logoutBtn" type="button">Выйти</button>
-          </div>
-
-          <div class="profile-orders">
-            <h3>Мои бронирования</h3>
-            <div class="user-orders" id="userOrders"></div>
-          </div>
+            <div class="footer__bottom">
+                <p>© 2024 AutoParts. Все права защищены.</p>
+            </div>
         </div>
-      </div>
-    </section>
-  </main>
+    </footer>
 
-  <!-- Footer -->
-  <footer class="footer" id="footer">
-    <div class="container">
-      <div class="footer__grid">
-        <div class="footer__col">
-          <a href="#" class="logo" data-navigate="home">
-            <span class="logo__icon">🔧</span>
-            <span class="logo__text">Auto<span class="logo__accent">Parts</span></span>
-          </a>
-          <p class="footer__desc">Качественные автозапчасти для вашего автомобиля. Работаем с 2019 года.</p>
-        </div>
+    <!-- Modals -->
+    <div class="modals-container" id="modalsContainer">
+        <!-- Auth Modal -->
+        <div class="modal" id="authModal">
+            <div class="modal__overlay" data-close-modal></div>
+            <div class="modal__content">
+                <button class="modal__close" data-close-modal type="button">&times;</button>
 
-        <div class="footer__col">
-          <h4 class="footer__title">Контакты</h4>
-          <ul class="footer__list">
-            <li><a href="tel:+79001234567">+7 (900) 123-45-67</a></li>
-            <li><a href="mailto:info@autoparts.ru">info@autoparts.ru</a></li>
-            <li>г. Москва, ул. Автозаводская, 1</li>
-          </ul>
-        </div>
+                <div class="auth-tabs">
+                    <button class="auth-tab active" type="button" data-auth-tab="login">Вход</button>
+                    <button class="auth-tab" type="button" data-auth-tab="register">Регистрация</button>
+                </div>
 
-        <div class="footer__col">
-          <h4 class="footer__title">Режим работы</h4>
-          <ul class="footer__list">
-            <li>Пн–Пт: 9:00 – 20:00</li>
-            <li>Сб: 10:00 – 18:00</li>
-            <li>Вс: выходной</li>
-          </ul>
-        </div>
+                <form class="auth-form" id="loginForm">
+                    <div class="form-group">
+                        <label class="form-label">Email</label>
+                        <input type="email" class="form-input" name="email" required placeholder="your@email.com" />
+                    </div>
 
-        <div class="footer__col">
-          <h4 class="footer__title">Мы в соцсетях</h4>
-          <div class="social-links">
-            <a href="#" class="social-link" aria-label="VK">VK</a>
-            <a href="#" class="social-link" aria-label="Telegram">TG</a>
-            <a href="#" class="social-link" aria-label="WhatsApp">WA</a>
-          </div>
-        </div>
-      </div>
+                    <div class="form-group">
+                        <label class="form-label">Пароль</label>
+                        <input type="password" class="form-input" name="password" required placeholder="••••••••"
+                            minlength="6" />
+                    </div>
 
-      <div class="footer__bottom">
-        <p>© 2024 AutoParts. Все права защищены.</p>
-      </div>
-    </div>
-  </footer>
+                    <div class="form-error" id="loginError"></div>
+                    <button type="submit" class="btn btn--primary btn--full">Войти</button>
+                </form>
 
-  <!-- Modals -->
-  <div class="modals-container" id="modalsContainer">
-    <!-- Auth Modal -->
-    <div class="modal" id="authModal">
-      <div class="modal__overlay" data-close-modal></div>
-      <div class="modal__content">
-        <button class="modal__close" data-close-modal type="button">&times;</button>
+                <form class="auth-form hidden" id="registerForm">
+                    <div class="form-group">
+                        <label class="form-label">Имя *</label>
+                        <input type="text" class="form-input" name="name" required placeholder="Например: Иван"
+                            minlength="2" />
+                    </div>
 
-        <div class="auth-tabs">
-          <button class="auth-tab active" type="button" data-auth-tab="login">Вход</button>
-          <button class="auth-tab" type="button" data-auth-tab="register">Регистрация</button>
+                    <div class="form-group">
+                        <label class="form-label">Email</label>
+                        <input type="email" class="form-input" name="email" required placeholder="your@email.com" />
+                    </div>
+
+                    <div class="form-group">
+                        <label class="form-label">Пароль</label>
+                        <input type="password" class="form-input" name="password" required
+                            placeholder="Минимум 6 символов" minlength="6" />
+                    </div>
+
+                    <div class="form-group">
+                        <label class="form-label">Подтвердите пароль</label>
+                        <input type="password" class="form-input" name="confirmPassword" required placeholder="••••••••"
+                            minlength="6" />
+                    </div>
+
+                    <div class="form-error" id="registerError"></div>
+                    <button type="submit" class="btn btn--primary btn--full">Зарегистрироваться</button>
+                </form>
+            </div>
         </div>
 
-        <form class="auth-form" id="loginForm">
-          <div class="form-group">
-            <label class="form-label">Email</label>
-            <input type="email" class="form-input" name="email" required placeholder="your@email.com" />
-          </div>
-
-          <div class="form-group">
-            <label class="form-label">Пароль</label>
-            <input type="password" class="form-input" name="password" required placeholder="••••••••" minlength="6" />
-          </div>
-
-          <div class="form-error" id="loginError"></div>
-          <button type="submit" class="btn btn--primary btn--full">Войти</button>
-        </form>
-
-        <form class="auth-form hidden" id="registerForm">
-          <div class="form-group">
-            <label class="form-label">Имя *</label>
-            <input type="text" class="form-input" name="name" required placeholder="Например: Иван" minlength="2" />
-          </div>
-
-          <div class="form-group">
-            <label class="form-label">Email</label>
-            <input type="email" class="form-input" name="email" required placeholder="your@email.com" />
-          </div>
-
-          <div class="form-group">
-            <label class="form-label">Пароль</label>
-            <input type="password" class="form-input" name="password" required placeholder="Минимум 6 символов" minlength="6" />
-          </div>
-
-          <div class="form-group">
-            <label class="form-label">Подтвердите пароль</label>
-            <input type="password" class="form-input" name="confirmPassword" required placeholder="••••••••" minlength="6" />
-          </div>
-
-          <div class="form-error" id="registerError"></div>
-          <button type="submit" class="btn btn--primary btn--full">Зарегистрироваться</button>
-        </form>
-      </div>
-    </div>
-
-    <!-- Product Detail Modal -->
-    <div class="modal" id="productModal">
-      <div class="modal__overlay" data-close-modal></div>
-      <div class="modal__content modal__content--lg">
-        <button class="modal__close" data-close-modal type="button">&times;</button>
-        <div class="product-detail" id="productDetail"></div>
-      </div>
-    </div>
-
-    <!-- Cart Modal -->
-    <div class="modal" id="cartModal">
-      <div class="modal__overlay" data-close-modal></div>
-      <div class="modal__content">
-        <button class="modal__close" data-close-modal type="button">&times;</button>
-
-        <h3 class="modal__title">Корзина</h3>
-
-        <div class="cart-items" id="cartItems"></div>
-
-        <div class="cart-empty hidden" id="cartEmpty">
-          <p>Корзина пуста</p>
+        <!-- Product Detail Modal -->
+        <div class="modal" id="productModal">
+            <div class="modal__overlay" data-close-modal></div>
+            <div class="modal__content modal__content--lg">
+                <button class="modal__close" data-close-modal type="button">&times;</button>
+                <div class="product-detail" id="productDetail"></div>
+            </div>
         </div>
 
-        <div class="cart-footer" id="cartFooter">
-          <div class="cart-total">
-            <span>Итого:</span>
-            <span class="cart-total__value" id="cartTotal">0 ₽</span>
-          </div>
+        <!-- Cart Modal -->
+        <div class="modal" id="cartModal">
+            <div class="modal__overlay" data-close-modal></div>
+            <div class="modal__content">
+                <button class="modal__close" data-close-modal type="button">&times;</button>
 
-          <button class="btn btn--primary btn--full" id="checkoutBtn" type="button">
-            Оформить бронирование
-          </button>
+                <h3 class="modal__title">Корзина</h3>
+
+                <div class="cart-items" id="cartItems"></div>
+
+                <div class="cart-empty hidden" id="cartEmpty">
+                    <p>Корзина пуста</p>
+                </div>
+
+                <div class="cart-footer" id="cartFooter">
+                    <div class="cart-total">
+                        <span>Итого:</span>
+                        <span class="cart-total__value" id="cartTotal">0 ₽</span>
+                    </div>
+
+                    <button class="btn btn--primary btn--full" id="checkoutBtn" type="button">
+                        Оформить бронирование
+                    </button>
+                </div>
+            </div>
         </div>
-      </div>
-    </div>
 
-    <!-- Checkout Modal -->
-    <div class="modal" id="checkoutModal">
-      <div class="modal__overlay" data-close-modal></div>
-      <div class="modal__content modal__content--lg">
-        <button class="modal__close" data-close-modal type="button">&times;</button>
+        <!-- Checkout Modal -->
+        <div class="modal" id="checkoutModal">
+            <div class="modal__overlay" data-close-modal></div>
+            <div class="modal__content modal__content--lg">
+                <button class="modal__close" data-close-modal type="button">&times;</button>
 
-        <h3 class="modal__title">Подтверждение бронирования</h3>
-        <div class="checkout-summary" id="checkoutSummary"></div>
+                <h3 class="modal__title">Подтверждение бронирования</h3>
+                <div class="checkout-summary" id="checkoutSummary"></div>
 
-        <div class="checkout-actions">
-          <button class="btn btn--secondary" data-close-modal type="button">Отмена</button>
-          <button class="btn btn--primary" id="confirmCheckoutBtn" type="button">Подтвердить бронь</button>
+                <div class="checkout-actions">
+                    <button class="btn btn--secondary" data-close-modal type="button">Отмена</button>
+                    <button class="btn btn--primary" id="confirmCheckoutBtn" type="button">Подтвердить бронь</button>
+                </div>
+            </div>
         </div>
-      </div>
-    </div>
 
-    <!-- Booking Result Modal -->
-    <div class="modal" id="bookingResultModal">
-      <div class="modal__overlay" data-close-modal></div>
-      <div class="modal__content modal__content--lg">
-        <button class="modal__close" data-close-modal type="button">&times;</button>
+        <!-- Booking Result Modal -->
+        <div class="modal" id="bookingResultModal">
+            <div class="modal__overlay" data-close-modal></div>
+            <div class="modal__content modal__content--lg">
+                <button class="modal__close" data-close-modal type="button">&times;</button>
 
-        <h3 class="modal__title">Бронь оформлена</h3>
-        <div id="bookingResultContent"></div>
+                <h3 class="modal__title">Бронь оформлена</h3>
+                <div id="bookingResultContent"></div>
 
-        <div class="checkout-actions">
-          <button class="btn btn--secondary" data-close-modal type="button">Закрыть</button>
-          <button class="btn btn--primary" type="button" data-navigate="profile">Перейти в кабинет</button>
+                <div class="checkout-actions">
+                    <button class="btn btn--secondary" data-close-modal type="button">Закрыть</button>
+                    <button class="btn btn--primary" type="button" data-navigate="profile">Перейти в кабинет</button>
+                </div>
+            </div>
         </div>
-      </div>
-    </div>
 
-    <!-- Edit Product Modal -->
-    <div class="modal" id="editProductModal">
-      <div class="modal__overlay" data-close-modal></div>
-      <div class="modal__content">
-        <button class="modal__close" data-close-modal type="button">&times;</button>
+        <!-- Edit Product Modal -->
+        <div class="modal" id="editProductModal">
+            <div class="modal__overlay" data-close-modal></div>
+            <div class="modal__content">
+                <div class="form-group">
+                    <label class="form-label">Фото</label>
+                    <div class="image-upload image-upload--compact" id="editImageUpload">
+                        <div class="image-upload__preview hidden" id="editImagePreviewWrap">
+                            <img id="editImagePreview" src="" alt="">
+                        </div>
+                        <div class="image-upload__text" id="editImageText">Нажмите, чтобы загрузить</div>
+                        <input type="file" accept="image/*" id="editImageFile">
+                    </div>
+                </div>
 
-        <h3 class="modal__title">Редактирование товара</h3>
-        <form class="edit-form" id="editProductForm">
-          <input type="hidden" id="editProductId" />
+                <button class="modal__close" data-close-modal type="button">&times;</button>
 
-          <div class="form-group">
-            <label class="form-label">Цена</label>
-            <input type="number" class="form-input" id="editPrice" min="0" required />
-          </div>
+                <h3 class="modal__title">Редактирование товара</h3>
+                <form class="edit-form" id="editProductForm">
+                    <input type="hidden" id="editProductId" />
 
-          <div class="form-group">
-            <label class="form-label">Количество</label>
-            <input type="number" class="form-input" id="editStock" min="0" required />
-          </div>
+                    <div class="form-group">
+                        <label class="form-label">Цена</label>
+                        <input type="number" class="form-input" id="editPrice" min="0" required />
+                    </div>
 
-          <div class="form-group">
-            <label class="form-label">Описание</label>
-            <textarea class="form-textarea" id="editDescription" rows="3"></textarea>
-          </div>
+                    <div class="form-group">
+                        <label class="form-label">Количество</label>
+                        <input type="number" class="form-input" id="editStock" min="0" required />
+                    </div>
 
-          <div class="form-actions">
-            <button type="button" class="btn btn--danger" id="deleteProductBtn">Удалить</button>
-            <button type="submit" class="btn btn--primary">Сохранить</button>
-          </div>
-        </form>
-      </div>
+                    <div class="form-group">
+                        <label class="form-label">Описание</label>
+                        <textarea class="form-textarea" id="editDescription" rows="3"></textarea>
+                    </div>
+
+                    <div class="form-actions">
+                        <button type="button" class="btn btn--danger" id="deleteProductBtn">Удалить</button>
+                        <button type="submit" class="btn btn--primary">Сохранить</button>
+                    </div>
+                </form>
+            </div>
+        </div>
+
+        <!-- Receipt modal (оставляем, но печать делаем через print-window) -->
+        <div class="modal" id="receiptModal">
+            <div class="modal__overlay" data-close-modal></div>
+            <div class="modal__content modal__content--receipt">
+                <button class="modal__close no-print" data-close-modal type="button">&times;</button>
+                <div class="receipt" id="receiptContent"></div>
+                <div class="receipt-actions no-print">
+                    <button class="btn btn--primary" id="printReceipt" type="button">Печать</button>
+                </div>
+            </div>
+        </div>
+
+        <!-- Confirm Modal -->
+        <div class="modal" id="confirmModal">
+            <div class="modal__overlay" data-close-modal></div>
+            <div class="modal__content modal__content--sm">
+                <h3 class="modal__title" id="confirmTitle">Подтверждение</h3>
+                <p class="confirm-message" id="confirmMessage">Вы уверены?</p>
+
+                <div class="confirm-actions">
+                    <button class="btn btn--secondary" data-close-modal type="button">Отмена</button>
+                    <button class="btn btn--danger" id="confirmAction" type="button">Подтвердить</button>
+                </div>
+            </div>
+        </div>
     </div>
 
-    <!-- Receipt modal (оставляем, но печать делаем через print-window) -->
-    <div class="modal" id="receiptModal">
-      <div class="modal__overlay" data-close-modal></div>
-      <div class="modal__content modal__content--receipt">
-        <button class="modal__close no-print" data-close-modal type="button">&times;</button>
-        <div class="receipt" id="receiptContent"></div>
-        <div class="receipt-actions no-print">
-          <button class="btn btn--primary" id="printReceipt" type="button">Печать</button>
+    <!-- Mass redModal -->
+    <div class="modal" id="bulkEditModal">
+        <div class="modal__overlay" data-close-modal></div>
+        <div class="modal__content modal__content--lg">
+            <button class="modal__close" data-close-modal type="button">&times;</button>
+
+            <h3 class="modal__title">Массовое редактирование</h3>
+            <p class="muted" style="margin-bottom: 12px;">
+                Выбрано: <strong id="bulkEditSelectedCount">0</strong>
+            </p>
+
+            <div class="bulk-table-wrap">
+                <table class="bulk-table">
+                    <thead>
+                        <tr>
+                            <th>ID</th>
+                            <th>Товар</th>
+                            <th>Фото</th>
+                            <th>Цена</th>
+                            <th>Кол-во</th>
+                            <th>Описание</th>
+                        </tr>
+                    </thead>
+                    <tbody id="bulkEditBody"></tbody>
+                </table>
+            </div>
+
+            <div class="form-actions">
+                <button class="btn btn--secondary" data-close-modal type="button">Закрыть</button>
+                <button class="btn btn--primary" id="bulkSaveBtn" type="button">Сохранить изменения</button>
+            </div>
         </div>
-      </div>
     </div>
 
-    <!-- Confirm Modal -->
-    <div class="modal" id="confirmModal">
-      <div class="modal__overlay" data-close-modal></div>
-      <div class="modal__content modal__content--sm">
-        <h3 class="modal__title" id="confirmTitle">Подтверждение</h3>
-        <p class="confirm-message" id="confirmMessage">Вы уверены?</p>
+    <div class="toast-container" id="toastContainer"></div>
 
-        <div class="confirm-actions">
-          <button class="btn btn--secondary" data-close-modal type="button">Отмена</button>
-          <button class="btn btn--danger" id="confirmAction" type="button">Подтвердить</button>
-        </div>
-      </div>
-    </div>
-  </div>
+    <!-- Firebase SDK -->
+    <script src="https://www.gstatic.com/firebasejs/9.22.0/firebase-app-compat.js"></script>
+    <script src="https://www.gstatic.com/firebasejs/9.22.0/firebase-auth-compat.js"></script>
+    <script src="https://www.gstatic.com/firebasejs/9.22.0/firebase-firestore-compat.js"></script>
 
-  <div class="toast-container" id="toastContainer"></div>
-
-  <!-- Firebase SDK -->
-  <script src="https://www.gstatic.com/firebasejs/9.22.0/firebase-app-compat.js"></script>
-  <script src="https://www.gstatic.com/firebasejs/9.22.0/firebase-auth-compat.js"></script>
-  <script src="https://www.gstatic.com/firebasejs/9.22.0/firebase-firestore-compat.js"></script>
-
-  <!-- App Scripts -->
-  <script src="js/config.js"></script>
-  <script src="js/utils.js"></script>
-  <script src="js/ui.js"></script>
-  <script src="js/auth.js"></script>
-  <script src="js/admin.js"></script>
-  <script src="js/reservations.js"></script>
-  <script src="js/app.js"></script>
+    <!-- App Scripts -->
+    <script src="js/config.js"></script>
+    <script src="js/utils.js"></script>
+    <script src="js/ui.js"></script>
+    <script src="js/auth.js"></script>
+    <script src="js/admin.js"></script>
+    <script src="js/reservations.js"></script>
+    <script src="js/app.js"></script>
 </body>
+
 </html>
