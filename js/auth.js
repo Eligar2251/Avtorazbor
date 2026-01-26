@@ -1,241 +1,256 @@
-/**
- * Модуль аутентификации
- */
 const Auth = {
-    user: null,
-    userData: null,
-    listeners: [],
+  currentUser: null,
+  userData: null,
+  onAuthStateChangedCallbacks: [],
 
-    // Init auth state listener
-    init() {
-        auth.onAuthStateChanged(async (user) => {
-            this.user = user;
-            if(user) {
-                await this.loadUserData();
-            } else {
-                this.userData = null;
-            }
-            this.notify();
-        });
-    },
+  init() {
+    this.bindEvents();
+    this.listenAuthState();
+  },
 
-    // Load user data from Firestore
-    async loadUserData() {
-        if(!this.user) return;
-        try {
-            const doc = await db.collection(DB.USERS).doc(this.user.uid).get();
-            if(doc.exists) {
-                this.userData = doc.data();
-            } else {
-                // Create user doc
-                this.userData = {
-                    email: this.user.email,
-                    name: this.user.displayName || '',
-                    phone: '',
-                    role: 'user',
-                    createdAt: firebase.firestore.FieldValue.serverTimestamp()
-                };
-                await db.collection(DB.USERS).doc(this.user.uid).set(this.userData);
-            }
-        } catch(e) {
-            console.error('Error loading user data:', e);
+  bindEvents() {
+    document.querySelectorAll('[data-auth-tab]').forEach(tab => {
+      tab.addEventListener('click', () => this.switchAuthTab(tab.dataset.authTab));
+    });
+
+    document.getElementById('loginForm')?.addEventListener('submit', (e) => this.handleLogin(e));
+    document.getElementById('registerForm')?.addEventListener('submit', (e) => this.handleRegister(e));
+
+    // Профиль: всегда профиль
+    document.getElementById('profileBtn')?.addEventListener('click', () => {
+      if (!this.currentUser) return UI.openModal('authModal');
+      UI.navigate('profile');
+      this.renderProfile();
+      Reservations.loadUserOrders();
+    });
+
+    document.getElementById('logoutBtn')?.addEventListener('click', () => this.logout());
+  },
+
+  listenAuthState() {
+    firebase.auth().onAuthStateChanged(async (user) => {
+      this.currentUser = user;
+
+      if (user) {
+        await this.loadUserData(user.uid);
+        UI.updateProfileButton(user);
+
+        // Показ/скрытие кнопки админки
+        UI.setAdminButtonVisible(this.isAdmin());
+
+        // Закроем auth modal если открыт
+        UI.closeModal('authModal');
+
+        // Если пользователь сейчас в профиле — обновим данные
+        if (!document.getElementById('profileSection')?.classList.contains('hidden')) {
+          this.renderProfile();
+          Reservations.loadUserOrders();
         }
-    },
-
-    // Subscribe to auth changes
-    subscribe(fn) {
-        this.listeners.push(fn);
-    },
-
-    notify() {
-        this.listeners.forEach(fn => fn(this.user, this.userData));
-    },
-
-    // Is logged in
-    isLoggedIn() {
-        return !!this.user;
-    },
-
-    // Is admin
-    isAdmin() {
-        return this.userData?.role === 'admin';
-    },
-
-    // Get current user
-    getUser() {
-        return this.user;
-    },
-
-    // Get user data
-    getUserData() {
-        return this.userData;
-    },
-
-    // Register
-    async register(email, password, name, phone) {
-        const cred = await auth.createUserWithEmailAndPassword(email, password);
-        await cred.user.updateProfile({ displayName: name });
-        
-        await db.collection(DB.USERS).doc(cred.user.uid).set({
-            email,
-            name,
-            phone,
-            role: 'user',
-            createdAt: firebase.firestore.FieldValue.serverTimestamp()
-        });
-        
-        await this.loadUserData();
-        return cred.user;
-    },
-
-    // Login
-    async login(email, password) {
-        const cred = await auth.signInWithEmailAndPassword(email, password);
-        await this.loadUserData();
-        return cred.user;
-    },
-
-    // Logout
-    async logout() {
-        await auth.signOut();
-        this.user = null;
+      } else {
         this.userData = null;
-    },
+        UI.updateProfileButton(null);
+        UI.setAdminButtonVisible(false);
+      }
 
-    // Update profile
-    async updateProfile(data) {
-        if(!this.user) return;
-        await db.collection(DB.USERS).doc(this.user.uid).update(data);
-        this.userData = {...this.userData, ...data};
-    },
+      this.onAuthStateChangedCallbacks.forEach(cb => cb(user, this.userData));
+    });
+  },
 
-    // Show login modal
-    showLoginModal() {
-        Modal.open({
-            title: 'Вход в аккаунт',
-            size: 'sm',
-            content: `
-                <form id="login-form">
-                    <div class="form-group">
-                        <label class="form-label">Email</label>
-                        <input type="email" class="form-input" name="email" required placeholder="email@example.com">
-                    </div>
-                    <div class="form-group">
-                        <label class="form-label">Пароль</label>
-                        <input type="password" class="form-input" name="password" required placeholder="••••••••">
-                    </div>
-                    <div id="login-error" class="form-error hidden"></div>
-                    <button type="submit" class="btn btn-primary" style="width:100%;margin-top:8px;">
-                        Войти
-                    </button>
-                </form>
-                <div class="text-center mt-4">
-                    <span style="color:var(--gray-500);font-size:14px;">Нет аккаунта?</span>
-                    <button class="btn btn-ghost btn-sm" onclick="Modal.closeAll();Auth.showRegisterModal();">
-                        Зарегистрироваться
-                    </button>
-                </div>
-            `
-        });
-
-        document.getElementById('login-form').onsubmit = async (e) => {
-            e.preventDefault();
-            const form = e.target;
-            const email = form.email.value;
-            const password = form.password.value;
-            const errEl = document.getElementById('login-error');
-            const btn = form.querySelector('button[type="submit"]');
-            
-            btn.disabled = true;
-            btn.textContent = 'Вход...';
-            errEl.classList.add('hidden');
-            
-            try {
-                await this.login(email, password);
-                Modal.closeAll();
-                Utils.toast('Добро пожаловать!', 'success');
-                App.render();
-            } catch(e) {
-                errEl.textContent = 'Неверный email или пароль';
-                errEl.classList.remove('hidden');
-                btn.disabled = false;
-                btn.textContent = 'Войти';
-            }
-        };
-    },
-
-    // Show register modal
-    showRegisterModal() {
-        Modal.open({
-            title: 'Регистрация',
-            size: 'sm',
-            content: `
-                <form id="register-form">
-                    <div class="form-group">
-                        <label class="form-label required">Имя</label>
-                        <input type="text" class="form-input" name="name" required placeholder="Иван Иванов">
-                    </div>
-                    <div class="form-group">
-                        <label class="form-label required">Телефон</label>
-                        <input type="tel" class="form-input" name="phone" required placeholder="+7 (999) 999-99-99">
-                    </div>
-                    <div class="form-group">
-                        <label class="form-label required">Email</label>
-                        <input type="email" class="form-input" name="email" required placeholder="email@example.com">
-                    </div>
-                    <div class="form-group">
-                        <label class="form-label required">Пароль</label>
-                        <input type="password" class="form-input" name="password" required minlength="6" placeholder="Минимум 6 символов">
-                    </div>
-                    <div id="register-error" class="form-error hidden"></div>
-                    <button type="submit" class="btn btn-primary" style="width:100%;margin-top:8px;">
-                        Зарегистрироваться
-                    </button>
-                </form>
-                <div class="text-center mt-4">
-                    <span style="color:var(--gray-500);font-size:14px;">Уже есть аккаунт?</span>
-                    <button class="btn btn-ghost btn-sm" onclick="Modal.closeAll();Auth.showLoginModal();">
-                        Войти
-                    </button>
-                </div>
-            `
-        });
-
-        document.getElementById('register-form').onsubmit = async (e) => {
-            e.preventDefault();
-            const form = e.target;
-            const name = form.name.value.trim();
-            const phone = form.phone.value.trim();
-            const email = form.email.value.trim();
-            const password = form.password.value;
-            const errEl = document.getElementById('register-error');
-            const btn = form.querySelector('button[type="submit"]');
-            
-            if(!Utils.isValidPhone(phone)) {
-                errEl.textContent = 'Введите корректный номер телефона';
-                errEl.classList.remove('hidden');
-                return;
-            }
-            
-            btn.disabled = true;
-            btn.textContent = 'Регистрация...';
-            errEl.classList.add('hidden');
-            
-            try {
-                await this.register(email, password, name, phone);
-                Modal.closeAll();
-                Utils.toast('Регистрация успешна!', 'success');
-                App.render();
-            } catch(e) {
-                let msg = 'Ошибка регистрации';
-                if(e.code === 'auth/email-already-in-use') msg = 'Email уже используется';
-                if(e.code === 'auth/weak-password') msg = 'Пароль слишком простой';
-                if(e.code === 'auth/invalid-email') msg = 'Некорректный email';
-                errEl.textContent = msg;
-                errEl.classList.remove('hidden');
-                btn.disabled = false;
-                btn.textContent = 'Зарегистрироваться';
-            }
-        };
+  async loadUserData(uid) {
+    try {
+      const doc = await firebase.firestore().collection('users').doc(uid).get();
+      if (doc.exists) {
+        this.userData = { id: doc.id, ...doc.data() };
+      } else {
+        // создаём документ пользователя
+        await this.createUserDocument(this.currentUser, { name: '' });
+      }
+    } catch (e) {
+      console.error('loadUserData error:', e);
     }
+  },
+
+  async createUserDocument(user, extra = {}) {
+    const userData = {
+      uid: user.uid,
+      email: user.email,
+      name: (extra.name || '').trim(),
+      role: 'user', // админа назначай вручную в Firestore
+      createdAt: firebase.firestore.FieldValue.serverTimestamp()
+    };
+
+    await firebase.firestore().collection('users').doc(user.uid).set(userData);
+    this.userData = { id: user.uid, ...userData };
+  },
+
+  switchAuthTab(tab) {
+    document.querySelectorAll('[data-auth-tab]').forEach(t => {
+      t.classList.toggle('active', t.dataset.authTab === tab);
+    });
+
+    document.getElementById('loginForm')?.classList.toggle('hidden', tab !== 'login');
+    document.getElementById('registerForm')?.classList.toggle('hidden', tab !== 'register');
+
+    this.clearErrors();
+  },
+
+  async handleLogin(e) {
+    e.preventDefault();
+    this.clearErrors();
+
+    const form = e.target;
+    const email = form.email.value.trim();
+    const password = form.password.value;
+    const errorEl = document.getElementById('loginError');
+    const btn = form.querySelector('button[type="submit"]');
+
+    if (!email || !password) {
+      errorEl.textContent = 'Заполните все поля';
+      return;
+    }
+
+    btn.disabled = true;
+    btn.textContent = 'Вход...';
+
+    try {
+      await firebase.auth().signInWithEmailAndPassword(email, password);
+      form.reset();
+      UI.showToast('Добро пожаловать!', 'success');
+    } catch (err) {
+      console.error(err);
+      errorEl.textContent = this.getErrorMessage(err.code);
+    } finally {
+      btn.disabled = false;
+      btn.textContent = 'Войти';
+    }
+  },
+
+  async handleRegister(e) {
+    e.preventDefault();
+    this.clearErrors();
+
+    const form = e.target;
+    const name = (form.name.value || '').trim();
+    const email = form.email.value.trim();
+    const password = form.password.value;
+    const confirmPassword = form.confirmPassword.value;
+
+    const errorEl = document.getElementById('registerError');
+    const btn = form.querySelector('button[type="submit"]');
+
+    if (!name || name.length < 2) {
+      errorEl.textContent = 'Введите имя (минимум 2 символа)';
+      return;
+    }
+
+    if (!email || !password || !confirmPassword) {
+      errorEl.textContent = 'Заполните все поля';
+      return;
+    }
+
+    if (!Utils.isValidEmail(email)) {
+      errorEl.textContent = 'Некорректный email';
+      return;
+    }
+
+    if (password.length < 6) {
+      errorEl.textContent = 'Пароль должен быть не менее 6 символов';
+      return;
+    }
+
+    if (password !== confirmPassword) {
+      errorEl.textContent = 'Пароли не совпадают';
+      return;
+    }
+
+    btn.disabled = true;
+    btn.textContent = 'Регистрация...';
+
+    try {
+      const result = await firebase.auth().createUserWithEmailAndPassword(email, password);
+      await this.createUserDocument(result.user, { name });
+      form.reset();
+      UI.showToast('Регистрация успешна!', 'success');
+    } catch (err) {
+      console.error(err);
+      errorEl.textContent = this.getErrorMessage(err.code);
+    } finally {
+      btn.disabled = false;
+      btn.textContent = 'Зарегистрироваться';
+    }
+  },
+
+  async logout() {
+    try {
+      await firebase.auth().signOut();
+      UI.navigate('home');
+      UI.showToast('Вы вышли из аккаунта', 'info');
+    } catch (e) {
+      console.error(e);
+      UI.showToast('Ошибка при выходе', 'error');
+    }
+  },
+
+  renderProfile() {
+    const emailEl = document.getElementById('profileEmail');
+    const nameEl = document.getElementById('profileName');
+    const roleEl = document.getElementById('profileRole');
+
+    if (emailEl && this.currentUser) emailEl.textContent = this.currentUser.email;
+
+    const name = this.userData?.name || (this.currentUser?.email ? this.currentUser.email.split('@')[0] : '—');
+    if (nameEl) nameEl.textContent = name;
+
+    if (roleEl) {
+      roleEl.textContent = this.isAdmin() ? 'Администратор' : 'Клиент';
+      roleEl.style.background = this.isAdmin() ? 'var(--color-success-light)' : 'var(--color-accent-light)';
+      roleEl.style.color = this.isAdmin() ? 'var(--color-success)' : 'var(--color-accent)';
+      roleEl.style.border = this.isAdmin()
+        ? '1px solid rgba(22,163,74,0.25)'
+        : '1px solid rgba(255,90,31,0.25)';
+    }
+  },
+
+  isAdmin() {
+    return this.userData?.role === 'admin';
+  },
+
+  isAuthenticated() {
+    return !!this.currentUser;
+  },
+
+  getUser() {
+    return this.currentUser;
+  },
+
+  getUserData() {
+    return this.userData;
+  },
+
+  clearErrors() {
+    const loginError = document.getElementById('loginError');
+    const registerError = document.getElementById('registerError');
+    if (loginError) loginError.textContent = '';
+    if (registerError) registerError.textContent = '';
+  },
+
+  getErrorMessage(code) {
+    const messages = {
+      'auth/user-not-found': 'Пользователь не найден',
+      'auth/wrong-password': 'Неверный пароль',
+      'auth/email-already-in-use': 'Email уже используется',
+      'auth/weak-password': 'Слишком слабый пароль',
+      'auth/invalid-email': 'Некорректный email',
+      'auth/user-disabled': 'Аккаунт заблокирован',
+      'auth/too-many-requests': 'Слишком много попыток. Попробуйте позже',
+      'auth/network-request-failed': 'Ошибка сети. Проверьте подключение'
+    };
+    return messages[code] || 'Произошла ошибка. Попробуйте снова';
+  },
+
+  onAuthChanged(callback) {
+    this.onAuthStateChangedCallbacks.push(callback);
+  }
 };
+
+window.Auth = Auth;

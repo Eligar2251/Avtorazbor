@@ -1,344 +1,473 @@
 /**
- * Модуль бронирований
+ * Reservations.js - Корзина и бронирование
+ * Исправления:
+ * - loadUserOrders() больше не использует orderBy (не требует индекса)
+ * - сортировка заказов делается на клиенте
+ * - защита от двойных обработчиков и повторного checkout
  */
+
 const Reservations = {
+  cart: [],
+  CART_STORAGE_KEY: 'autoparts_cart',
 
-    openCheckoutModal(items) {
-        if (!Auth.isLoggedIn()) {
-            Auth.showLoginModal();
-            return;
-        }
+  _eventsBound: false,
+  _checkoutInProgress: false,
 
-        const userData = Auth.getUserData();
-        
-        // Проверяем доступность товаров
-        const parts = [];
-        for (const i of items) {
-            const p = Catalog.getPart(i.partId);
-            if (!p) continue;
-            
-            const available = Catalog.getAvailable(p);
-            if (available < i.qty) {
-                Utils.toast(`${p.name}: доступно только ${available} шт.`, 'warning');
-                return;
-            }
-            parts.push({ ...p, qty: i.qty });
-        }
+  init() {
+    this.loadCart();
+    this.bindEvents();
+    this.updateCartUI();
+  },
 
-        if (parts.length === 0) {
-            Utils.toast('Нет доступных товаров', 'error');
-            return;
-        }
+  bindEvents() {
+    if (this._eventsBound) return;
+    this._eventsBound = true;
 
-        const total = parts.reduce((s, p) => s + p.price * p.qty, 0);
+    document.getElementById('cartBtn')?.addEventListener('click', () => this.openCart());
+    document.getElementById('checkoutBtn')?.addEventListener('click', () => this.checkout());
+    document.getElementById('confirmCheckoutBtn')?.addEventListener('click', () => this.commitCheckout());
+  },
 
-        Modal.open({
-            title: 'Оформление бронирования',
-            size: 'lg',
-            content: `
-                <form id="checkout-form">
-                    <div class="car-form-section">
-                        <h3><i class="fas fa-box"></i> Ваш заказ</h3>
-                        <div style="background:var(--gray-50);padding:12px;border-radius:var(--radius);max-height:200px;overflow-y:auto;">
-                            ${parts.map(p => `
-                                <div style="display:flex;justify-content:space-between;padding:8px 0;border-bottom:1px solid var(--gray-200);">
-                                    <div>
-                                        <strong>${p.name}</strong><br>
-                                        <span style="font-size:12px;color:var(--gray-500)">${p.brand} ${p.model} ${p.year} • ${p.qty} шт.</span>
-                                    </div>
-                                    <div style="font-weight:600;color:var(--primary)">${Utils.formatPrice(p.price * p.qty)}</div>
-                                </div>
-                            `).join('')}
-                        </div>
-                        <div style="display:flex;justify-content:space-between;padding:16px;background:var(--gray-100);border-radius:var(--radius);margin-top:12px;">
-                            <span style="font-size:18px;font-weight:600;">Итого:</span>
-                            <span style="font-size:24px;font-weight:700;color:var(--primary)">${Utils.formatPrice(total)}</span>
-                        </div>
-                    </div>
+  loadCart() {
+    this.cart = Utils.loadFromStorage(this.CART_STORAGE_KEY, []);
+    this.validateCart();
+  },
 
-                    <div class="car-form-section">
-                        <h3><i class="fas fa-user"></i> Контактные данные</h3>
-                        <div class="form-row">
-                            <div class="form-group">
-                                <label class="form-label required">Ваше имя</label>
-                                <input type="text" class="form-input" name="name" value="${userData?.name || ''}" required>
-                            </div>
-                            <div class="form-group">
-                                <label class="form-label required">Телефон</label>
-                                <input type="tel" class="form-input" name="phone" value="${userData?.phone || ''}" required placeholder="+7 (999) 999-99-99">
-                            </div>
-                        </div>
-                        <div class="form-group">
-                            <label class="form-label">Комментарий</label>
-                            <textarea class="form-input" name="comment" rows="2" placeholder="Дополнительная информация..."></textarea>
-                        </div>
-                    </div>
+  saveCart() {
+    Utils.saveToStorage(this.CART_STORAGE_KEY, this.cart);
+    this.updateCartUI();
+  },
 
-                    <div class="form-group">
-                        <label class="form-check">
-                            <input type="checkbox" required>
-                            <span>Я согласен с условиями бронирования. Бронь действует 24 часа.</span>
-                        </label>
-                    </div>
+  async validateCart() {
+    if (!this.cart.length) return;
 
-                    <div id="checkout-error" class="form-error hidden"></div>
-                </form>
-            `,
-            footer: `
-                <button class="btn btn-secondary" onclick="Modal.closeAll()">Отмена</button>
-                <button class="btn btn-success" type="submit" form="checkout-form" id="checkout-btn">
-                    <i class="fas fa-check"></i> Подтвердить бронь
-                </button>
-            `
+    try {
+      const db = firebase.firestore();
+      const validItems = [];
+
+      for (const item of this.cart) {
+        const doc = await db.collection('inventory').doc(item.productId).get();
+        if (!doc.exists) continue;
+
+        const data = doc.data();
+        if ((data.stock || 0) <= 0) continue;
+
+        validItems.push({
+          ...item,
+          price: data.price,
+          stock: data.stock,
+          imageUrl: data.imageUrl || item.imageUrl || ''
         });
+      }
 
-        document.getElementById('checkout-form').onsubmit = (e) => {
-            e.preventDefault();
-            this.processCheckout(e.target, items, total);
-        };
-    },
+      if (validItems.length !== this.cart.length) {
+        const removed = this.cart.length - validItems.length;
+        UI.showToast(
+          `${removed} ${Utils.pluralize(removed, ['товар удалён', 'товара удалено', 'товаров удалено'])} из корзины (нет в наличии)`,
+          'warning'
+        );
+      }
 
-    async processCheckout(form, items, total) {
-        const name = form.name.value.trim();
-        const phone = form.phone.value.trim();
-        const comment = form.comment.value.trim();
-        const errEl = document.getElementById('checkout-error');
-        const btn = document.getElementById('checkout-btn');
-
-        if (!Utils.isValidPhone(phone)) {
-            errEl.textContent = 'Введите корректный номер телефона';
-            errEl.classList.remove('hidden');
-            return;
-        }
-
-        btn.disabled = true;
-        btn.innerHTML = '<i class="fas fa-spinner fa-spin"></i> Оформление...';
-        errEl.classList.add('hidden');
-
-        try {
-            const orderNum = Utils.genOrderNum();
-            const reservationItems = [];
-
-            // Резервируем товары
-            for (const i of items) {
-                const p = Catalog.getPart(i.partId);
-                if (!p) continue;
-
-                // Проверяем еще раз доступность
-                const available = Catalog.getAvailable(p);
-                if (available < i.qty) {
-                    throw new Error(`${p.name}: недостаточно товара`);
-                }
-
-                reservationItems.push({
-                    partId: i.partId,
-                    name: p.name,
-                    brand: p.brand,
-                    model: p.model,
-                    year: p.year,
-                    price: p.price,
-                    quantity: i.qty
-                });
-
-                // Увеличиваем reserved
-                const partRef = db.collection(DB.PARTS).doc(i.partId);
-                const partDoc = await partRef.get();
-                
-                if (partDoc.exists) {
-                    const currentReserved = partDoc.data().reserved || 0;
-                    await partRef.update({
-                        reserved: currentReserved + i.qty
-                    });
-                }
-            }
-
-            // Создаем бронирование
-            await db.collection(DB.RESERVATIONS).add({
-                orderNumber: orderNum,
-                userId: Auth.getUser().uid,
-                items: reservationItems,
-                total,
-                customerName: name,
-                customerPhone: Utils.formatPhone(phone),
-                comment,
-                status: 'pending',
-                createdAt: firebase.firestore.FieldValue.serverTimestamp(),
-                expiresAt: new Date(Date.now() + 24 * 60 * 60 * 1000)
-            });
-
-            // Обновляем профиль
-            await Auth.updateProfile({ name, phone: Utils.formatPhone(phone) });
-
-            // Очищаем корзину
-            Cart.clear();
-
-            // Обновляем каталог
-            await Catalog.load();
-            Catalog.applyFilters();
-            Catalog.renderParts();
-
-            Modal.closeAll();
-            this.showSuccess(orderNum, total);
-
-        } catch (e) {
-            console.error('Checkout error:', e);
-            errEl.textContent = e.message || 'Ошибка оформления. Попробуйте снова.';
-            errEl.classList.remove('hidden');
-            btn.disabled = false;
-            btn.innerHTML = '<i class="fas fa-check"></i> Подтвердить бронь';
-        }
-    },
-
-    showSuccess(orderNum, total) {
-        Modal.open({
-            title: 'Бронирование оформлено!',
-            size: 'sm',
-            content: `
-                <div class="text-center">
-                    <div style="width:80px;height:80px;background:#dcfce7;border-radius:50%;display:flex;align-items:center;justify-content:center;margin:0 auto 20px;">
-                        <i class="fas fa-check" style="font-size:36px;color:var(--success)"></i>
-                    </div>
-                    <p style="color:var(--gray-600);margin-bottom:20px;">Ваш заказ успешно забронирован</p>
-                    <div style="background:var(--gray-100);padding:12px;border-radius:var(--radius);font-family:monospace;font-size:18px;font-weight:700;margin-bottom:20px;">
-                        ${orderNum}
-                    </div>
-                    <div style="background:#fef3c7;padding:12px;border-radius:var(--radius);margin-bottom:20px;">
-                        <i class="fas fa-clock" style="color:var(--warning)"></i>
-                        <span style="font-size:14px;color:var(--gray-700);">Бронь действует 24 часа</span>
-                    </div>
-                    <p style="color:var(--gray-500);font-size:14px;">Сумма: <strong>${Utils.formatPrice(total)}</strong></p>
-                </div>
-            `,
-            footer: `<button class="btn btn-primary" style="width:100%;" onclick="Modal.closeAll()">На главную</button>`
-        });
-    },
-
-    quickReserve(partId) {
-        if (!Auth.isLoggedIn()) {
-            Auth.showLoginModal();
-            Utils.toast('Войдите для оформления брони', 'info');
-            return;
-        }
-
-        const part = Catalog.getPart(partId);
-        if (!part || Catalog.getAvailable(part) <= 0) {
-            Utils.toast('Товар недоступен', 'error');
-            return;
-        }
-
-        Modal.closeAll();
-        this.openCheckoutModal([{ partId, qty: 1 }]);
-    },
-
-    generateReceipt(res) {
-        const date = Utils.formatDate(res.completedAt || res.createdAt, true);
-        return `
-            <div class="receipt">
-                <div class="receipt-header">
-                    <div class="receipt-logo">АвтоРазбор</div>
-                    <div class="receipt-subtitle">Запчасти для авто</div>
-                    <div class="receipt-subtitle">Тел: +7 (999) 999-99-99</div>
-                </div>
-                
-                <div class="receipt-divider">--------------------------------</div>
-                
-                <div class="receipt-row">
-                    <span>Чек №:</span>
-                    <span>${res.orderNumber}</span>
-                </div>
-                <div class="receipt-row">
-                    <span>Дата:</span>
-                    <span>${date}</span>
-                </div>
-                <div class="receipt-row">
-                    <span>Клиент:</span>
-                    <span>${res.customerName}</span>
-                </div>
-                <div class="receipt-row">
-                    <span>Тел:</span>
-                    <span>${res.customerPhone}</span>
-                </div>
-                
-                <div class="receipt-divider">--------------------------------</div>
-                
-                ${res.items.map(i => `
-                    <div class="receipt-item">
-                        <div class="receipt-item-name">${i.name}</div>
-                        <div class="receipt-item-line">
-                            <span>${i.quantity} x ${i.price}₽</span>
-                            <span>${i.price * i.quantity}₽</span>
-                        </div>
-                    </div>
-                `).join('')}
-                
-                <div class="receipt-divider">--------------------------------</div>
-                
-                <div class="receipt-total">
-                    <span>ИТОГО:</span>
-                    <span>${Utils.formatPrice(res.total)}</span>
-                </div>
-                
-                <div class="receipt-divider">--------------------------------</div>
-                
-                <div class="receipt-footer">
-                    <div class="receipt-barcode">||||| |||| ||||| ||||</div>
-                    <div>Спасибо за покупку!</div>
-                </div>
-                
-                <div class="receipt-sign">
-                    <div class="receipt-sign-line"></div>
-                    <div>Подпись продавца</div>
-                </div>
-            </div>
-        `;
-    },
-
-    printReceipt(res) {
-        const html = this.generateReceipt(res);
-        const win = window.open('', '_blank', 'width=320,height=600');
-        win.document.write(`
-            <!DOCTYPE html>
-            <html>
-            <head>
-                <title>Чек ${res.orderNumber}</title>
-                <style>
-                    * { margin: 0; padding: 0; box-sizing: border-box; }
-                    body {
-                        font-family: 'Courier New', monospace;
-                        font-size: 12px;
-                        padding: 10px;
-                        background: #fff;
-                        width: 280px;
-                    }
-                    .receipt { width: 260px; }
-                    .receipt-header { text-align: center; margin-bottom: 8px; }
-                    .receipt-logo { font-size: 16px; font-weight: bold; }
-                    .receipt-subtitle { font-size: 10px; color: #666; }
-                    .receipt-divider { text-align: center; color: #999; margin: 6px 0; font-size: 10px; letter-spacing: -1px; }
-                    .receipt-row { display: flex; justify-content: space-between; font-size: 11px; margin: 3px 0; }
-                    .receipt-item { margin: 6px 0; }
-                    .receipt-item-name { font-size: 11px; font-weight: bold; }
-                    .receipt-item-line { display: flex; justify-content: space-between; font-size: 11px; color: #666; }
-                    .receipt-total { display: flex; justify-content: space-between; font-size: 14px; font-weight: bold; margin: 8px 0; }
-                    .receipt-footer { text-align: center; margin-top: 10px; font-size: 10px; color: #666; }
-                    .receipt-barcode { font-size: 20px; letter-spacing: 2px; margin: 6px 0; }
-                    .receipt-sign { margin-top: 20px; text-align: center; }
-                    .receipt-sign-line { border-bottom: 1px solid #000; width: 150px; height: 25px; margin: 0 auto 4px; }
-                    .receipt-sign div:last-child { font-size: 9px; color: #666; }
-                    @media print { body { padding: 0; } }
-                </style>
-            </head>
-            <body>
-                ${html}
-                <script>
-                    window.onload = function() {
-                        window.print();
-                        setTimeout(function() { window.close(); }, 1000);
-                    }
-                </script>
-            </body>
-            </html>
-        `);
-        win.document.close();
+      this.cart = validItems;
+      this.saveCart();
+    } catch (e) {
+      console.error('validateCart error:', e);
     }
+  },
+
+  addToCart(product) {
+    if (!Auth.isAuthenticated()) {
+      UI.openModal('authModal');
+      UI.showToast('Войдите, чтобы добавить товар', 'info');
+      return;
+    }
+
+    if (!product?.id) {
+      UI.showToast('Ошибка: товар не найден', 'error');
+      return;
+    }
+
+    if ((product.stock || 0) <= 0) {
+      UI.showToast('Товар закончился', 'error');
+      return;
+    }
+
+    if (this.cart.some(i => i.productId === product.id)) {
+      UI.showToast('Товар уже в корзине', 'warning');
+      return;
+    }
+
+    this.cart.push({
+      productId: product.id,
+      partName: product.partName,
+      carMake: product.carMake,
+      carModel: product.carModel,
+      year: product.year,
+      bodyType: product.bodyType,
+      restyling: !!product.restyling,
+      condition: product.condition,
+      price: product.price,
+      imageUrl: product.imageUrl || '',
+      addedAt: new Date().toISOString()
+    });
+
+    this.saveCart();
+    UI.showToast('Товар добавлен в корзину', 'success');
+    UI.closeModal('productModal');
+  },
+
+  removeFromCart(productId) {
+    this.cart = this.cart.filter(i => i.productId !== productId);
+    this.saveCart();
+    this.renderCartItems();
+    UI.showToast('Товар удален из корзины', 'info');
+  },
+
+  clearCart() {
+    this.cart = [];
+    this.saveCart();
+    this.renderCartItems();
+  },
+
+  getCartCount() {
+    return this.cart.length;
+  },
+
+  getCartTotal() {
+    return this.cart.reduce((sum, item) => sum + (item.price || 0), 0);
+  },
+
+  updateCartUI() {
+    UI.updateCartCount(this.getCartCount());
+  },
+
+  openCart() {
+    this.renderCartItems();
+    UI.openModal('cartModal');
+  },
+
+  renderCartItems() {
+    const container = document.getElementById('cartItems');
+    const emptyEl = document.getElementById('cartEmpty');
+    const footerEl = document.getElementById('cartFooter');
+    const totalEl = document.getElementById('cartTotal');
+    if (!container) return;
+
+    if (!this.cart.length) {
+      container.innerHTML = '';
+      emptyEl?.classList.remove('hidden');
+      footerEl?.classList.add('hidden');
+      totalEl && (totalEl.textContent = Utils.formatPrice(0));
+      return;
+    }
+
+    emptyEl?.classList.add('hidden');
+    footerEl?.classList.remove('hidden');
+
+    container.innerHTML = this.cart.map(item => {
+      const imageUrl = item.imageUrl || 'data:image/svg+xml,%3Csvg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="%236c6c80"%3E%3Cpath d="M21 19V5c0-1.1-.9-2-2-2H5c-1.1 0-2 .9-2 2v14c0 1.1.9 2 2 2h14c1.1 0 2-.9 2-2zM8.5 13.5l2.5 3.01L14.5 12l4.5 6H5l3.5-4.5z"/%3E%3C/svg%3E';
+
+      return `
+        <div class="cart-item" data-product-id="${item.productId}">
+          <img src="${imageUrl}" alt="" class="cart-item__image">
+          <div class="cart-item__info">
+            <div class="cart-item__name">${Utils.escapeHtml(item.partName)}</div>
+            <div class="cart-item__car muted">${Utils.escapeHtml(item.carMake)} ${Utils.escapeHtml(item.carModel)}</div>
+            <div class="cart-item__price">${Utils.formatPrice(item.price || 0)}</div>
+          </div>
+          <button class="cart-item__remove" type="button" onclick="Reservations.removeFromCart('${item.productId}')">✕</button>
+        </div>
+      `;
+    }).join('');
+
+    totalEl && (totalEl.textContent = Utils.formatPrice(this.getCartTotal()));
+  },
+
+  checkout() {
+    if (!Auth.isAuthenticated()) {
+      UI.closeModal('cartModal');
+      UI.openModal('authModal');
+      return;
+    }
+
+    if (!this.cart.length) {
+      UI.showToast('Корзина пуста', 'warning');
+      return;
+    }
+
+    const user = Auth.getUser();
+    const userData = Auth.getUserData();
+    const name = userData?.name || (user?.email ? user.email.split('@')[0] : '—');
+
+    UI.renderCheckoutSummary(this.cart, name, user?.email);
+
+    UI.closeModal('cartModal');
+    UI.openModal('checkoutModal');
+  },
+
+  async commitCheckout() {
+    if (this._checkoutInProgress) return;
+    this._checkoutInProgress = true;
+
+    const btn = document.getElementById('confirmCheckoutBtn');
+    const oldText = btn?.textContent || 'Подтвердить бронь';
+
+    try {
+      if (!Auth.isAuthenticated()) {
+        UI.openModal('authModal');
+        return;
+      }
+
+      if (!this.cart.length) {
+        UI.showToast('Корзина пуста', 'warning');
+        UI.closeModal('checkoutModal');
+        return;
+      }
+
+      btn && (btn.disabled = true);
+      btn && (btn.textContent = 'Оформляем...');
+
+      const user = Auth.getUser();
+      const userData = Auth.getUserData();
+      const userName = userData?.name || (user?.email ? user.email.split('@')[0] : '—');
+
+      const db = firebase.firestore();
+      const orderRef = db.collection('orders').doc();
+      const orderNumber = Utils.generateOrderNumber();
+
+      const itemsSnapshot = this.cart.map(i => ({
+        productId: i.productId,
+        partName: i.partName,
+        carMake: i.carMake,
+        carModel: i.carModel,
+        year: i.year,
+        bodyType: i.bodyType,
+        restyling: !!i.restyling,
+        condition: i.condition,
+        price: i.price
+      }));
+
+      const total = itemsSnapshot.reduce((s, x) => s + (x.price || 0), 0);
+
+      // транзакция без индексов
+      await db.runTransaction(async (tx) => {
+        for (const item of itemsSnapshot) {
+          const ref = db.collection('inventory').doc(item.productId);
+          const snap = await tx.get(ref);
+
+          if (!snap.exists) throw new Error(`Товар не найден: ${item.partName}`);
+
+          const stock = snap.data().stock || 0;
+          if (stock <= 0) throw new Error(`Товар закончился: ${item.partName}`);
+
+          tx.update(ref, { stock: stock - 1 });
+        }
+
+        tx.set(orderRef, {
+          orderNumber,
+          userId: user.uid,
+          userEmail: user.email,
+          userName,
+          items: itemsSnapshot,
+          status: 'active',
+          date: firebase.firestore.FieldValue.serverTimestamp(),
+          createdAt: firebase.firestore.FieldValue.serverTimestamp()
+        });
+      });
+
+      // успех
+      this.clearCart();
+      UI.closeModal('checkoutModal');
+
+      UI.renderBookingResult({
+        orderNumber,
+        userName,
+        items: itemsSnapshot.map(x => ({ partName: x.partName, price: x.price })),
+        total
+      });
+      UI.openModal('bookingResultModal');
+
+      // печать 80mm
+      UI.printReceipt({
+        title: 'Чек бронирования',
+        orderNumber,
+        userName,
+        items: itemsSnapshot.map(x => ({ partName: x.partName, price: x.price })),
+        total,
+        date: Utils.formatDate(new Date(), true)
+      });
+
+      UI.showToast(`Бронь оформлена: #${orderNumber}`, 'success');
+
+      if (!document.getElementById('profileSection')?.classList.contains('hidden')) {
+        this.loadUserOrders();
+      }
+
+    } catch (e) {
+      console.error('commitCheckout error:', e);
+      UI.showToast(e?.message || 'Ошибка при оформлении брони', 'error');
+      await this.validateCart();
+      this.renderCartItems();
+    } finally {
+      btn && (btn.disabled = false);
+      btn && (btn.textContent = oldText);
+      this._checkoutInProgress = false;
+    }
+  },
+
+  // -------------------------------
+  // FIX: без orderBy -> без индекса
+  // -------------------------------
+  async loadUserOrders() {
+    const container = document.getElementById('userOrders');
+    if (!container) return;
+
+    const user = Auth.getUser();
+    if (!user) {
+      container.innerHTML = '<p>Войдите, чтобы увидеть заказы</p>';
+      return;
+    }
+
+    container.innerHTML = '<div class="loading-state"><div class="spinner"></div></div>';
+
+    try {
+      // ВАЖНО: без orderBy, иначе нужен индекс
+      const snapshot = await firebase.firestore()
+        .collection('orders')
+        .where('userId', '==', user.uid)
+        .limit(200)
+        .get();
+
+      const orders = snapshot.docs.map(doc => ({ id: doc.id, ...doc.data() }));
+
+      // сортируем на клиенте по date/createdAt
+      orders.sort((a, b) => {
+        const aMs = (a.date?.toMillis?.() || a.createdAt?.toMillis?.() || 0);
+        const bMs = (b.date?.toMillis?.() || b.createdAt?.toMillis?.() || 0);
+        return bMs - aMs;
+      });
+
+      this.renderUserOrders(orders);
+
+    } catch (error) {
+      console.error('loadUserOrders error:', error);
+      container.innerHTML = '<p>Ошибка загрузки заказов</p>';
+      UI.showToast('Ошибка загрузки заказов', 'error');
+    }
+  },
+
+  renderUserOrders(orders) {
+    const container = document.getElementById('userOrders');
+    if (!container) return;
+
+    if (!orders.length) {
+      container.innerHTML = `
+        <div class="empty-state" style="padding: 2rem;">
+          <p>У вас пока нет заказов</p>
+          <button class="btn btn--primary" type="button" data-navigate="catalog" style="margin-top: 1rem;">
+            Перейти в каталог
+          </button>
+        </div>
+      `;
+      container.querySelector('[data-navigate]')?.addEventListener('click', (e) => {
+        e.preventDefault();
+        UI.navigate('catalog');
+      });
+      return;
+    }
+
+    container.innerHTML = orders.map(order => {
+      const statusInfo = Config.orderStatuses[order.status] || { label: order.status, class: 'active' };
+      const total = (order.items || []).reduce((sum, item) => sum + (item.price || 0), 0);
+
+      return `
+        <div class="order-card">
+          <div class="order-card__header">
+            <div>
+              <span class="order-card__id">Заказ #${Utils.escapeHtml(order.orderNumber || order.id.slice(-8))}</span>
+              <span class="order-card__date">${Utils.formatDate(order.date || order.createdAt, true)}</span>
+            </div>
+            <span class="order-card__status order-card__status--${statusInfo.class}">${statusInfo.label}</span>
+          </div>
+
+          <div class="order-card__items">
+            ${(order.items || []).map(item => `
+              <div class="order-item">
+                <span>${Utils.escapeHtml(item.partName)}</span>
+                <span>${Utils.formatPrice(item.price || 0)}</span>
+              </div>
+            `).join('')}
+          </div>
+
+          <div class="order-card__total">
+            <span>Итого:</span>
+            <span>${Utils.formatPrice(total)}</span>
+          </div>
+
+          ${order.status === 'active' ? `
+            <div class="order-card__actions">
+              <button class="btn btn--sm btn--danger" type="button" onclick="Reservations.cancelUserOrder('${order.id}')">
+                Отменить бронирование
+              </button>
+            </div>
+          ` : ''}
+        </div>
+      `;
+    }).join('');
+  },
+
+  async cancelUserOrder(orderId) {
+    const confirmed = await UI.confirm('Отмена бронирования', 'Вы уверены, что хотите отменить бронирование?');
+    if (!confirmed) return;
+
+    try {
+      const db = firebase.firestore();
+      const orderDoc = await db.collection('orders').doc(orderId).get();
+
+      if (!orderDoc.exists) {
+        UI.showToast('Заказ не найден', 'error');
+        return;
+      }
+
+      const order = orderDoc.data();
+
+      if (order.userId !== Auth.getUser()?.uid) {
+        UI.showToast('Нет доступа к этому заказу', 'error');
+        return;
+      }
+
+      if (order.status !== 'active') {
+        UI.showToast('Этот заказ нельзя отменить', 'error');
+        return;
+      }
+
+      const batch = db.batch();
+
+      batch.update(db.collection('orders').doc(orderId), {
+        status: 'cancelled',
+        cancelledAt: firebase.firestore.FieldValue.serverTimestamp(),
+        cancelledBy: 'user',
+        updatedAt: firebase.firestore.FieldValue.serverTimestamp()
+      });
+
+      for (const item of (order.items || [])) {
+        if (item.productId) {
+          batch.update(db.collection('inventory').doc(item.productId), {
+            stock: firebase.firestore.FieldValue.increment(1)
+          });
+        }
+      }
+
+      await batch.commit();
+
+      UI.showToast('Бронирование отменено', 'success');
+      this.loadUserOrders();
+
+    } catch (error) {
+      console.error('cancelUserOrder error:', error);
+      UI.showToast('Ошибка при отмене заказа', 'error');
+    }
+  }
 };
+
+window.Reservations = Reservations;

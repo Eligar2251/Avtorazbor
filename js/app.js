@@ -1,436 +1,311 @@
 /**
- * Главный модуль приложения
+ * App.js - Главный контроллер приложения (Realtime Catalog)
+ * Обновляет каталог моментально при изменениях inventory:
+ * - добавление/обновление/удаление
+ * - изменение stock после брони/отмены
  */
+
 const App = {
-    async init() {
-        this.showLoading();
-
-        try {
-            if (typeof firebase === 'undefined') {
-                throw new Error('Firebase SDK not loaded');
-            }
-
-            if (typeof auth === 'undefined' || typeof db === 'undefined') {
-                throw new Error('Firebase not initialized');
-            }
-
-            Auth.init();
-            Cart.init();
-            await Catalog.init();
-
-            Auth.subscribe(() => this.render());
-
-            this.render();
-            this.hideLoading();
-
-            console.log('App initialized');
-        } catch (e) {
-            console.error('Init error:', e);
-            this.showError(e.message);
-        }
+  catalog: {
+    products: [],
+    filteredProducts: [],
+    currentPage: 1,
+    totalPages: 1,
+    filters: {
+      make: '',
+      model: '',
+      part: '',
+      condition: '',
+      search: ''
     },
+    sort: 'newest'
+  },
 
-    render() {
-        this.renderHeader();
-        this.renderMobileNav();
-        this.renderHero();
-        Catalog.render();
-        this.renderAbout();
-        this.renderContacts();
-        this.renderFooter();
-    },
+  initialized: false,
+  _eventsBound: false,
 
-    renderHeader() {
-        const el = document.getElementById('header');
-        const user = Auth.getUser();
-        const userData = Auth.getUserData();
-        const isAdmin = Auth.isAdmin();
-        const cartCount = Cart.getCount();
+  // unsubscribe realtime listeners
+  _unsubInventory: null,
 
-        el.innerHTML = `
-            <header class="header">
-                <div class="header-inner">
-                    <a href="#" class="logo" onclick="window.scrollTo({top:0,behavior:'smooth'});return false;">
-                        <div class="logo-icon"><i class="fas fa-car"></i></div>
-                        <span class="logo-text">АвтоРазбор</span>
-                    </a>
-                    
-                    <div class="search-box" id="search-box">
-                        <input type="text" placeholder="Поиск запчастей..." id="search-input">
-                        <button onclick="App.doSearch()"><i class="fas fa-search"></i></button>
-                    </div>
-                    
-                    <nav class="nav">
-                        <a href="#catalog" class="nav-link">Каталог</a>
-                        <a href="#about" class="nav-link">О нас</a>
-                        <a href="#contacts" class="nav-link">Контакты</a>
-                        
-                        <button class="btn btn-primary cart-btn" onclick="Cart.openModal()">
-                            <i class="fas fa-shopping-cart"></i>
-                            ${cartCount > 0 ? `<span class="cart-badge">${cartCount}</span>` : ''}
-                        </button>
-                        
-                        ${user ? `
-                            <div class="user-menu">
-                                <span class="user-name">${userData?.name || ''}</span>
-                                ${isAdmin ? `
-                                    <button class="btn btn-secondary btn-sm" onclick="Admin.open()">
-                                        <i class="fas fa-cogs"></i>
-                                    </button>
-                                ` : ''}
-                                <button class="btn btn-ghost btn-sm" onclick="App.logout()">
-                                    <i class="fas fa-sign-out-alt"></i>
-                                </button>
-                            </div>
-                        ` : `
-                            <button class="btn btn-secondary" onclick="Auth.showLoginModal()">
-                                <i class="fas fa-user"></i>
-                                <span>Войти</span>
-                            </button>
-                        `}
-                    </nav>
-                    
-                    <!-- Mobile buttons -->
-                    <button class="search-toggle" onclick="App.toggleSearch()">
-                        <i class="fas fa-search"></i>
-                    </button>
-                    
-                    <button class="btn btn-primary cart-btn menu-btn-cart" onclick="Cart.openModal()" style="display:none;">
-                        <i class="fas fa-shopping-cart"></i>
-                        ${cartCount > 0 ? `<span class="cart-badge">${cartCount}</span>` : ''}
-                    </button>
-                    
-                    <button class="menu-btn" onclick="App.toggleMobileNav()">
-                        <i class="fas fa-bars"></i>
-                    </button>
-                </div>
-            </header>
-        `;
+  async init() {
+    if (this.initialized) return;
 
-        // Search event
-        const searchInput = document.getElementById('search-input');
-        if (searchInput) {
-            searchInput.onkeypress = (e) => {
-                if (e.key === 'Enter') {
-                    this.doSearch();
-                    this.toggleSearch();
-                }
-            };
-        }
+    try {
+      this.initFirebase();
 
-        // Update mobile cart button visibility
-        this.updateMobileUI();
-    },
+      UI.init();
+      Auth.init();
+      Reservations.init();
 
-    renderMobileNav() {
-        const user = Auth.getUser();
-        const userData = Auth.getUserData();
-        const isAdmin = Auth.isAdmin();
+      this.bindEvents();
+      this.populateFilters();
 
-        let mobileNav = document.getElementById('mobile-nav');
-        if (!mobileNav) {
-            mobileNav = document.createElement('div');
-            mobileNav.id = 'mobile-nav';
-            mobileNav.className = 'mobile-nav';
-            document.body.appendChild(mobileNav);
-        }
+      // ВАЖНО: realtime каталог (главная фича для “обновлялось без F5”)
+      this.subscribeInventoryRealtime();
 
-        mobileNav.innerHTML = `
-            <div class="mobile-nav-content">
-                <div class="mobile-nav-header">
-                    <span style="font-weight:600;font-size:16px;">Меню</span>
-                    <button class="mobile-nav-close" onclick="App.toggleMobileNav()">
-                        <i class="fas fa-times"></i>
-                    </button>
-                </div>
-                
-                ${user ? `
-                    <div class="mobile-nav-user">
-                        <div class="mobile-nav-user-name">${userData?.name || 'Пользователь'}</div>
-                        <div class="mobile-nav-user-email">${user.email}</div>
-                    </div>
-                ` : ''}
-                
-                <div class="mobile-nav-links">
-                    <a href="#catalog" class="mobile-nav-link" onclick="App.toggleMobileNav()">
-                        <i class="fas fa-th-large"></i>
-                        Каталог
-                    </a>
-                    <a href="#about" class="mobile-nav-link" onclick="App.toggleMobileNav()">
-                        <i class="fas fa-info-circle"></i>
-                        О нас
-                    </a>
-                    <a href="#contacts" class="mobile-nav-link" onclick="App.toggleMobileNav()">
-                        <i class="fas fa-phone"></i>
-                        Контакты
-                    </a>
-                    
-                    <div class="mobile-nav-divider"></div>
-                    
-                    <a href="#" class="mobile-nav-link" onclick="App.toggleMobileNav();Cart.openModal();">
-                        <i class="fas fa-shopping-cart"></i>
-                        Корзина
-                        ${Cart.getCount() > 0 ? `<span class="badge badge-danger" style="margin-left:auto;">${Cart.getCount()}</span>` : ''}
-                    </a>
-                    
-                    ${user ? `
-                        ${isAdmin ? `
-                            <a href="#" class="mobile-nav-link" onclick="App.toggleMobileNav();Admin.open();">
-                                <i class="fas fa-cogs"></i>
-                                Админ-панель
-                            </a>
-                        ` : ''}
-                        <div class="mobile-nav-divider"></div>
-                        <a href="#" class="mobile-nav-link" onclick="App.toggleMobileNav();App.logout();">
-                            <i class="fas fa-sign-out-alt"></i>
-                            Выйти
-                        </a>
-                    ` : `
-                        <div class="mobile-nav-divider"></div>
-                        <a href="#" class="mobile-nav-link" onclick="App.toggleMobileNav();Auth.showLoginModal();">
-                            <i class="fas fa-sign-in-alt"></i>
-                            Войти
-                        </a>
-                        <a href="#" class="mobile-nav-link" onclick="App.toggleMobileNav();Auth.showRegisterModal();">
-                            <i class="fas fa-user-plus"></i>
-                            Регистрация
-                        </a>
-                    `}
-                </div>
-            </div>
-        `;
+      Auth.onAuthChanged((user, userData) => this.handleAuthChange(user, userData));
 
-        // Close on backdrop click
-        mobileNav.onclick = (e) => {
-            if (e.target === mobileNav) {
-                this.toggleMobileNav();
-            }
-        };
-    },
-
-    toggleMobileNav() {
-        const nav = document.getElementById('mobile-nav');
-        if (nav) {
-            nav.classList.toggle('active');
-            document.body.style.overflow = nav.classList.contains('active') ? 'hidden' : '';
-        }
-    },
-
-    toggleSearch() {
-        const searchBox = document.getElementById('search-box');
-        if (searchBox) {
-            searchBox.classList.toggle('active');
-            if (searchBox.classList.contains('active')) {
-                searchBox.querySelector('input').focus();
-            }
-        }
-    },
-
-    updateMobileUI() {
-        // Show/hide mobile cart button based on screen size
-        const style = document.createElement('style');
-        style.textContent = `
-            @media (max-width: 767px) {
-                .menu-btn-cart { display: flex !important; }
-                .nav .cart-btn { display: none !important; }
-            }
-        `;
-        document.head.appendChild(style);
-    },
-
-    doSearch() {
-        const input = document.getElementById('search-input');
-        const q = input ? input.value.trim() : '';
-        if (q) {
-            Catalog.search(q);
-            document.getElementById('catalog').scrollIntoView({ behavior: 'smooth' });
-        }
-    },
-
-    updateCartBadge() {
-        document.querySelectorAll('.cart-btn').forEach(btn => {
-            const count = Cart.getCount();
-            let badge = btn.querySelector('.cart-badge');
-
-            if (count > 0) {
-                if (!badge) {
-                    badge = document.createElement('span');
-                    badge.className = 'cart-badge';
-                    btn.appendChild(badge);
-                }
-                badge.textContent = count;
-            } else if (badge) {
-                badge.remove();
-            }
-        });
-
-        // Update mobile nav
-        this.renderMobileNav();
-    },
-
-    async logout() {
-        await Auth.logout();
-        Utils.toast('Вы вышли из аккаунта', 'info');
-        this.render();
-    },
-
-    renderHero() {
-        const el = document.getElementById('hero');
-        el.innerHTML = `
-            <section class="hero">
-                <div class="hero-inner">
-                    <div class="hero-content">
-                        <h1 class="hero-title">Качественные <span>запчасти</span> для вашего авто</h1>
-                        <p class="hero-text">Широкий выбор б/у и новых запчастей для ВАЗ и Toyota. Гарантия качества, честные цены.</p>
-                        <div class="hero-btns">
-                            <button class="btn btn-primary btn-lg" onclick="document.getElementById('catalog').scrollIntoView({behavior:'smooth'})">
-                                <i class="fas fa-search"></i> Найти запчасть
-                            </button>
-                            <button class="btn btn-secondary btn-lg" onclick="document.getElementById('contacts').scrollIntoView({behavior:'smooth'})">
-                                <i class="fas fa-phone"></i> Контакты
-                            </button>
-                        </div>
-                        <div class="hero-stats">
-                            <div class="stat">
-                                <div class="stat-value" id="stat-parts">0</div>
-                                <div class="stat-label">Запчастей</div>
-                            </div>
-                            <div class="stat">
-                                <div class="stat-value" id="stat-cars">0</div>
-                                <div class="stat-label">Авто на разборе</div>
-                            </div>
-                            <div class="stat">
-                                <div class="stat-value">100%</div>
-                                <div class="stat-label">Гарантия</div>
-                            </div>
-                        </div>
-                    </div>
-                </div>
-            </section>
-        `;
-
-        this.updateStats();
-    },
-
-    async updateStats() {
-        try {
-            const partsCount = Catalog.parts.reduce((s, p) => s + (p.quantity || 0), 0);
-            const partsEl = document.getElementById('stat-parts');
-            if (partsEl) partsEl.textContent = partsCount;
-
-            const carsSnap = await db.collection(DB.CARS).get();
-            const carsEl = document.getElementById('stat-cars');
-            if (carsEl) carsEl.textContent = carsSnap.size;
-        } catch (e) {
-            console.error('Stats error:', e);
-        }
-    },
-
-    renderAbout() {
-        const el = document.getElementById('about');
-        el.innerHTML = `
-            <section class="about">
-                <div class="about-inner">
-                    <h2 class="section-title">О нашей компании</h2>
-                    <p class="section-desc">Мы специализируемся на продаже качественных запчастей для автомобилей</p>
-                    
-                    <div class="features">
-                        <div class="feature">
-                            <div class="feature-icon"><i class="fas fa-check-circle"></i></div>
-                            <h3 class="feature-title">Гарантия качества</h3>
-                            <p class="feature-text">Все запчасти проверяются перед продажей</p>
-                        </div>
-                        <div class="feature">
-                            <div class="feature-icon"><i class="fas fa-ruble-sign"></i></div>
-                            <h3 class="feature-title">Честные цены</h3>
-                            <p class="feature-text">Без скрытых платежей и накруток</p>
-                        </div>
-                        <div class="feature">
-                            <div class="feature-icon"><i class="fas fa-truck"></i></div>
-                            <h3 class="feature-title">Быстрая выдача</h3>
-                            <p class="feature-text">Забронируйте и заберите в удобное время</p>
-                        </div>
-                    </div>
-                </div>
-            </section>
-        `;
-    },
-
-    renderContacts() {
-        const el = document.getElementById('contacts');
-        el.innerHTML = `
-            <section class="contacts">
-                <div class="contacts-inner">
-                    <h2 class="section-title">Контакты</h2>
-                    <p class="section-desc">Свяжитесь с нами любым удобным способом</p>
-                    
-                    <div class="contacts-grid">
-                        <div class="contact-card">
-                            <h3><i class="fas fa-map-marker-alt" style="color:var(--primary)"></i> Адрес</h3>
-                            <div class="contact-row"><i class="fas fa-building"></i> г. Москва, ул. Примерная, 123</div>
-                            <div class="contact-row"><i class="fas fa-clock"></i> Пн-Сб: 9:00 - 20:00</div>
-                            <div class="contact-row"><i class="fas fa-clock"></i> Вс: 10:00 - 18:00</div>
-                        </div>
-                        <div class="contact-card">
-                            <h3><i class="fas fa-phone" style="color:var(--primary)"></i> Связь</h3>
-                            <div class="contact-row"><i class="fas fa-phone"></i> +7 (999) 999-99-99</div>
-                            <div class="contact-row"><i class="fas fa-envelope"></i> info@autorazbor.ru</div>
-                            <div style="display:flex;gap:8px;margin-top:12px;flex-wrap:wrap;">
-                                <a href="#" class="btn btn-ghost btn-sm"><i class="fab fa-whatsapp"></i> WhatsApp</a>
-                                <a href="#" class="btn btn-ghost btn-sm"><i class="fab fa-telegram"></i> Telegram</a>
-                            </div>
-                        </div>
-                    </div>
-                </div>
-            </section>
-        `;
-    },
-
-    renderFooter() {
-        const el = document.getElementById('footer');
-        el.innerHTML = `
-            <footer class="footer">
-                <div class="footer-inner">
-                    <div class="footer-copy">© 2024 АвтоРазбор. Все права защищены.</div>
-                    <div class="footer-links">
-                        <a href="#about">О нас</a>
-                        <a href="#contacts">Контакты</a>
-                    </div>
-                </div>
-            </footer>
-        `;
-    },
-
-    showLoading() {
-        const loading = document.createElement('div');
-        loading.id = 'loading';
-        loading.className = 'loading';
-        loading.innerHTML = `
-            <div class="spinner"></div>
-            <div>Загрузка...</div>
-        `;
-        document.body.appendChild(loading);
-    },
-
-    hideLoading() {
-        const loading = document.getElementById('loading');
-        if (loading) loading.remove();
-    },
-
-    showError(message = 'Попробуйте обновить страницу') {
-        this.hideLoading();
-        document.body.innerHTML = `
-            <div class="loading">
-                <i class="fas fa-exclamation-triangle" style="font-size:48px;color:var(--danger);margin-bottom:16px;"></i>
-                <h2>Ошибка загрузки</h2>
-                <p style="color:var(--gray-500);margin:16px 0;text-align:center;padding:0 20px;">${message}</p>
-                <button class="btn btn-primary" onclick="location.reload()">Обновить</button>
-            </div>
-        `;
+      this.initialized = true;
+      console.log('✅ AutoParts инициализирован (Realtime)');
+    } catch (error) {
+      console.error('❌ Ошибка инициализации:', error);
+      UI.showToast('Ошибка загрузки приложения', 'error');
     }
+  },
+
+  initFirebase() {
+    if (!firebase.apps.length) {
+      firebase.initializeApp(Config.firebase);
+      console.log('Firebase инициализирован');
+    }
+  },
+
+  bindEvents() {
+    if (this._eventsBound) return;
+    this._eventsBound = true;
+
+    const globalSearch = document.getElementById('globalSearch');
+    if (globalSearch) {
+      globalSearch.addEventListener('input', Utils.debounce((e) => {
+        this.catalog.filters.search = e.target.value.trim();
+        this.applyFilters();
+      }, 250));
+
+      globalSearch.addEventListener('keydown', (e) => {
+        if (e.key === 'Enter') {
+          this.catalog.filters.search = e.target.value.trim();
+          this.applyFilters();
+          UI.navigate('catalog');
+        }
+      });
+    }
+
+    document.getElementById('searchBtn')?.addEventListener('click', () => {
+      const query = document.getElementById('globalSearch')?.value.trim();
+      this.catalog.filters.search = query || '';
+      this.applyFilters();
+      UI.navigate('catalog');
+    });
+
+    document.getElementById('filterMake')?.addEventListener('change', (e) => {
+      this.catalog.filters.make = e.target.value;
+      this.catalog.filters.model = '';
+      this.updateModelFilterFromCache();
+      this.applyFilters();
+    });
+
+    document.getElementById('filterModel')?.addEventListener('change', (e) => {
+      this.catalog.filters.model = e.target.value;
+      this.applyFilters();
+    });
+
+    document.getElementById('filterPart')?.addEventListener('change', (e) => {
+      this.catalog.filters.part = e.target.value;
+      this.applyFilters();
+    });
+
+    document.getElementById('filterCondition')?.addEventListener('change', (e) => {
+      this.catalog.filters.condition = e.target.value;
+      this.applyFilters();
+    });
+
+    document.getElementById('sortSelect')?.addEventListener('change', (e) => {
+      this.catalog.sort = e.target.value;
+      this.applyFilters();
+    });
+
+    document.getElementById('resetFilters')?.addEventListener('click', () => {
+      this.resetFilters();
+    });
+  },
+
+  populateFilters() {
+    UI.populateMakesSelect(document.getElementById('filterMake'), true);
+    UI.populatePartsSelect(document.getElementById('filterPart'));
+
+    // модели будут заполнены после прихода realtime данных
+    this.updateModelFilterFromCache();
+  },
+
+  /**
+   * ВАЖНО: обновление моделей без запросов к Firestore (без индексов)
+   * Берём уникальные модели из текущего каталога products
+   */
+  updateModelFilterFromCache() {
+    const modelSelect = document.getElementById('filterModel');
+    if (!modelSelect) return;
+
+    const make = this.catalog.filters.make;
+
+    if (!make) {
+      modelSelect.innerHTML = '<option value="">Выберите марку</option>';
+      modelSelect.disabled = true;
+      return;
+    }
+
+    const models = [...new Set(
+      this.catalog.products
+        .filter(p => p.carMake === make && (p.stock || 0) > 0)
+        .map(p => p.carModel)
+        .filter(Boolean)
+    )].sort((a, b) => a.localeCompare(b));
+
+    let html = '<option value="">Все модели</option>';
+    models.forEach(model => {
+      const safe = Utils.escapeHtml(String(model));
+      html += `<option value="${safe}">${safe}</option>`;
+    });
+
+    modelSelect.innerHTML = html;
+    modelSelect.disabled = false;
+  },
+
+  /**
+   * Realtime подписка на inventory
+   * Товар добавили/изменили/удалили -> UI обновится моментально.
+   */
+  subscribeInventoryRealtime() {
+    if (this._unsubInventory) return;
+
+    UI.showLoading();
+
+    const db = firebase.firestore();
+
+    // Можно слушать только то, что реально в наличии:
+    // Документ уйдёт из результатов когда stock станет 0.
+    this._unsubInventory = db.collection('inventory')
+      .where('stock', '>', 0)
+      .onSnapshot((snapshot) => {
+        this.catalog.products = snapshot.docs.map(doc => ({
+          id: doc.id,
+          ...doc.data()
+        }));
+
+        // обновим фильтр моделей (если марка выбрана)
+        this.updateModelFilterFromCache();
+
+        // перерисуем каталог по текущим фильтрам
+        this.applyFilters();
+
+        // обновим статистику на главной
+        let totalParts = 0;
+        this.catalog.products.forEach(p => totalParts += (p.stock || 0));
+        UI.updateStats({ totalParts });
+
+      }, (error) => {
+        console.error('subscribeInventoryRealtime error:', error);
+        UI.showToast('Ошибка realtime каталога', 'error');
+        document.getElementById('loadingState')?.classList.add('hidden');
+        document.getElementById('emptyState')?.classList.remove('hidden');
+      });
+  },
+
+  applyFilters() {
+    let filtered = [...this.catalog.products];
+    const f = this.catalog.filters;
+
+    if (f.make) filtered = filtered.filter(p => p.carMake === f.make);
+    if (f.model) filtered = filtered.filter(p => p.carModel === f.model);
+    if (f.part) filtered = filtered.filter(p => p.partName === f.part);
+    if (f.condition) filtered = filtered.filter(p => p.condition === f.condition);
+
+    if (f.search) {
+      const q = f.search.toLowerCase();
+      filtered = filtered.filter(p =>
+        (p.partName || '').toLowerCase().includes(q) ||
+        (p.carMake || '').toLowerCase().includes(q) ||
+        (p.carModel || '').toLowerCase().includes(q) ||
+        (p.description || '').toLowerCase().includes(q)
+      );
+    }
+
+    this.sortProducts(filtered);
+
+    this.catalog.filteredProducts = filtered;
+    this.catalog.totalPages = Math.max(1, Math.ceil(filtered.length / Config.itemsPerPage));
+    this.catalog.currentPage = 1;
+
+    this.renderPage();
+  },
+
+  sortProducts(products) {
+    switch (this.catalog.sort) {
+      case 'price_asc':
+        products.sort((a, b) => (a.price || 0) - (b.price || 0));
+        break;
+      case 'price_desc':
+        products.sort((a, b) => (b.price || 0) - (a.price || 0));
+        break;
+      case 'name_asc':
+        products.sort((a, b) => (a.partName || '').localeCompare(b.partName || ''));
+        break;
+      case 'newest':
+      default:
+        products.sort((a, b) => {
+          const da = a.createdAt?.toDate?.() || new Date(0);
+          const db = b.createdAt?.toDate?.() || new Date(0);
+          return db - da;
+        });
+    }
+  },
+
+  renderPage() {
+    const start = (this.catalog.currentPage - 1) * Config.itemsPerPage;
+    const end = start + Config.itemsPerPage;
+    const pageProducts = this.catalog.filteredProducts.slice(start, end);
+
+    UI.renderProducts(pageProducts);
+    UI.renderPagination(this.catalog.currentPage, this.catalog.totalPages, (page) => this.goToPage(page));
+  },
+
+  goToPage(page) {
+    this.catalog.currentPage = page;
+    this.renderPage();
+    document.getElementById('catalogSection')?.scrollIntoView({ behavior: 'smooth', block: 'start' });
+  },
+
+  resetFilters() {
+    this.catalog.filters = { make: '', model: '', part: '', condition: '', search: '' };
+    this.catalog.sort = 'newest';
+
+    document.getElementById('filterMake').value = '';
+    document.getElementById('filterModel').value = '';
+    document.getElementById('filterModel').disabled = true;
+    document.getElementById('filterPart').value = '';
+    document.getElementById('filterCondition').value = '';
+    document.getElementById('sortSelect').value = 'newest';
+    document.getElementById('globalSearch').value = '';
+
+    this.applyFilters();
+  },
+
+  showProductDetail(productId) {
+    const product = this.catalog.products.find(p => p.id === productId);
+    if (!product) {
+      UI.showToast('Товар не найден', 'error');
+      return;
+    }
+    UI.renderProductDetail(product);
+    UI.openModal('productModal');
+  },
+
+  handleAuthChange(user, userData) {
+    if (user && userData) {
+      Reservations.validateCart();
+
+      // если админ секция открыта
+      if (userData.role === 'admin' && !document.getElementById('adminSection')?.classList.contains('hidden')) {
+        window.Admin?.init?.();
+      }
+    }
+  }
 };
 
-// Start
+window.App = App;
+
 document.addEventListener('DOMContentLoaded', () => {
-    App.init();
+  App.init();
 });
+
+window.addEventListener('error', (e) => console.error('Глобальная ошибка:', e.error));
+window.addEventListener('unhandledrejection', (e) => console.error('Unhandled rejection:', e.reason));

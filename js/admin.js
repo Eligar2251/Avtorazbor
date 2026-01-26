@@ -1,968 +1,1220 @@
 /**
- * Модуль админ-панели
+ * Admin.js - Модуль административной панели
+ * - Добавление авто (wizard)
+ * - Склад (inventory)
+ * - Брони (orders)
+ * - Продажи (sales)
+ * - Вкладка "Авто" (группировка из inventory)
+ *
+ * Важные фиксы:
+ * 1) bindEvents() вешается 1 раз
+ * 2) защита от повторного сохранения (_saving)
+ * 3) дедуп выбранных запчастей (Set)
+ * 4) removePart снимает ВСЕ чекбоксы с одинаковым value
+ * 5) upload: клик всегда ищет актуальный input
+ * 6) сохранение: inventoryKey -> fallback по полям, при update проставляем inventoryKey + carKey
+ * 7) sales: печать чека по id (без JSON.stringify)
+ * 8) orders: загрузка без where(in)+orderBy (чтобы не упираться в индексы)
+ * 9) автоподстановка цены (если такая запчасть от этого авто уже есть на складе)
+ * 10) вкладка авто рендерится красиво (карточки <details> + сетка запчастей)
  */
+
 const Admin = {
-    tab: 'reservations',
-    reservations: [],
-    inventory: [],
-    sales: [],
-    history: [],
-    selectedParts: {},
+  _eventsBound: false,
+  _saving: false,
+  _carMakeSelectBound: false,
+  
 
-    async open() {
-        if (!Auth.isAdmin()) {
-            Utils.toast('Нет доступа', 'error');
-            return;
+  // если админ изменил цену руками — больше не перезатираем автоподстановкой
+  priceTouched: new Set(),
+
+  wizardState: {
+    step: 1,
+    carData: {},
+    selectedParts: [],
+    partsDetails: {}
+  },
+
+  editingProduct: null,
+
+  inventoryData: [],
+  ordersData: [],
+  salesData: [],
+
+  init() {
+    if (!Auth.isAdmin()) {
+      UI.showToast('Доступ запрещен', 'error');
+      UI.navigate('home');
+      return;
+    }
+
+    if (!this._eventsBound) {
+      this.bindEvents();
+      this._eventsBound = true;
+    }
+
+    this.initCarMakesSelect();
+    this.renderPartsCategories();
+
+    // грузим данные
+    this.loadInventory();
+    this.loadOrders();
+    this.loadSales();
+  },
+
+  bindEvents() {
+    // Tabs
+    document.querySelectorAll('.admin-tab').forEach(tab => {
+      tab.addEventListener('click', async () => {
+        await this.switchTab(tab.dataset.tab);
+      });
+    });
+
+    // Wizard step1 submit
+    document.getElementById('carInfoForm')?.addEventListener('submit', (e) => this.handleCarInfoSubmit(e));
+
+    // Wizard nav
+    document.getElementById('wizardBack1')?.addEventListener('click', () => this.goToStep(1));
+    document.getElementById('wizardNext2')?.addEventListener('click', () => this.goToStep(3));
+    document.getElementById('wizardBack2')?.addEventListener('click', () => this.goToStep(2));
+
+    // Save parts
+    document.getElementById('saveParts')?.addEventListener('click', () => this.saveAllParts());
+
+    // Search parts
+    document.getElementById('partsSearch')?.addEventListener('input', Utils.debounce((e) => {
+      this.filterParts(e.target.value);
+    }, 200));
+
+    // Inventory search/sort
+    document.getElementById('inventorySearch')?.addEventListener('input', Utils.debounce((e) => {
+      this.filterInventory(e.target.value);
+    }, 200));
+    document.getElementById('inventorySort')?.addEventListener('change', (e) => {
+      this.sortInventory(e.target.value);
+    });
+
+    // Cars tab search/sort
+    document.getElementById('carsSearch')?.addEventListener('input', Utils.debounce(() => {
+      this.refreshCarsTab();
+    }, 200));
+    document.getElementById('carsSort')?.addEventListener('change', () => this.refreshCarsTab());
+
+    // Edit product
+    document.getElementById('editProductForm')?.addEventListener('submit', (e) => this.handleEditSubmit(e));
+    document.getElementById('deleteProductBtn')?.addEventListener('click', () => this.deleteProduct());
+
+    // Print old modal receipt (если используешь receiptModal)
+    document.getElementById('printReceipt')?.addEventListener('click', () => window.print());
+  },
+
+  async switchTab(tabName) {
+    document.querySelectorAll('.admin-tab').forEach(tab => {
+      tab.classList.toggle('active', tab.dataset.tab === tabName);
+    });
+
+    document.querySelectorAll('.admin-content').forEach(content => content.classList.add('hidden'));
+
+    const id = `tab${tabName.charAt(0).toUpperCase() + tabName.slice(1)}`;
+    document.getElementById(id)?.classList.remove('hidden');
+
+    if (tabName === 'inventory') await this.loadInventory();
+    if (tabName === 'orders') await this.loadOrders();
+    if (tabName === 'sales') await this.loadSales();
+    if (tabName === 'cars') {
+      if (!this.inventoryData.length) await this.loadInventory();
+      this.refreshCarsTab();
+    }
+  },
+
+  // =====================================================
+  // Helpers
+  // =====================================================
+  createCarKey(car) {
+    const make = car?.carMake || '';
+    const model = car?.carModel || '';
+    const year = car?.year || '';
+    const body = car?.bodyType || '';
+    const rest = car?.restyling ? '1' : '0';
+    return [make, model, year, body, rest].join('|').toLowerCase();
+  },
+
+  getTsMillis(obj) {
+    const ts = obj?.updatedAt || obj?.createdAt || obj?.date || null;
+    if (!ts) return 0;
+    if (typeof ts.toMillis === 'function') return ts.toMillis();
+    if (ts instanceof Date) return ts.getTime();
+    return 0;
+  },
+
+  findSuggestedPrice(partName, condition) {
+    const car = this.wizardState.carData;
+    if (!car?.carMake) return null;
+
+    const carKey = this.createCarKey(car);
+
+    const candidates = this.inventoryData.filter(x => {
+      const xCarKey = x.carKey || this.createCarKey(x);
+      return xCarKey === carKey && x.partName === partName;
+    });
+
+    if (!candidates.length) return null;
+
+    const exact = candidates.filter(x => x.condition === condition);
+    const list = exact.length ? exact : candidates;
+
+    list.sort((a, b) => this.getTsMillis(b) - this.getTsMillis(a));
+    return list[0]?.price ?? null;
+  },
+
+  // =====================================================
+  // Wizard
+  // =====================================================
+  initCarMakesSelect() {
+    const select = document.getElementById('carMake');
+    if (!select) return;
+
+    if (!this._carMakeSelectBound) {
+      select.addEventListener('change', (e) => {
+        if (e.target.value === '__custom__') {
+          const customMake = prompt('Введите название марки:');
+          if (customMake && customMake.trim()) {
+            const option = document.createElement('option');
+            option.value = customMake.trim();
+            option.textContent = customMake.trim();
+            option.selected = true;
+            select.insertBefore(option, select.lastElementChild);
+          } else {
+            select.value = '';
+          }
+        }
+      });
+      this._carMakeSelectBound = true;
+    }
+
+    UI.populateMakesSelect(select, false);
+    select.innerHTML = '<option value="">Выберите марку</option>' + select.innerHTML;
+
+    const hasCustom = Array.from(select.options).some(o => o.value === '__custom__');
+    if (!hasCustom) {
+      const custom = document.createElement('option');
+      custom.value = '__custom__';
+      custom.textContent = '+ Добавить свою марку';
+      select.appendChild(custom);
+    }
+  },
+
+  renderPartsCategories() {
+    const container = document.getElementById('partsCategories');
+    if (!container) return;
+
+    container.innerHTML = Object.entries(Config.partsCategories).map(([category, parts]) => {
+      return `
+        <div class="parts-category" data-category="${Utils.escapeHtml(category)}">
+          <h4 class="parts-category__title">${Utils.escapeHtml(category)}</h4>
+          <div class="parts-list">
+            ${parts.map(part => `
+              <label class="part-item" data-part="${Utils.escapeHtml(part)}">
+                <input type="checkbox" value="${Utils.escapeHtml(part)}">
+                <span class="checkbox-custom"></span>
+                <span class="part-name">${Utils.escapeHtml(part)}</span>
+              </label>
+            `).join('')}
+          </div>
+        </div>
+      `;
+    }).join('');
+
+    container.querySelectorAll('input[type="checkbox"]').forEach(cb => {
+      cb.addEventListener('change', () => this.updateSelectedParts());
+    });
+  },
+
+  filterParts(query) {
+    const q = (query || '').toLowerCase().trim();
+
+    document.querySelectorAll('.part-item').forEach(item => {
+      const name = (item.dataset.part || '').toLowerCase();
+      item.style.display = name.includes(q) ? '' : 'none';
+    });
+
+    document.querySelectorAll('.parts-category').forEach(categoryEl => {
+      const items = Array.from(categoryEl.querySelectorAll('.part-item'));
+      const anyVisible = items.some(i => i.style.display !== 'none');
+      categoryEl.style.display = anyVisible ? '' : 'none';
+    });
+  },
+
+  updateSelectedParts() {
+    const set = new Set();
+    document.querySelectorAll('#partsCategories input[type="checkbox"]:checked')
+      .forEach(cb => set.add(cb.value));
+
+    this.wizardState.selectedParts = Array.from(set);
+
+    const countEl = document.getElementById('selectedPartsCount');
+    if (countEl) countEl.textContent = this.wizardState.selectedParts.length;
+
+    const nextBtn = document.getElementById('wizardNext2');
+    if (nextBtn) nextBtn.disabled = this.wizardState.selectedParts.length === 0;
+  },
+
+  handleCarInfoSubmit(e) {
+    e.preventDefault();
+
+    this.wizardState.carData = {
+      carMake: document.getElementById('carMake')?.value || '',
+      carModel: (document.getElementById('carModel')?.value || '').trim(),
+      year: parseInt(document.getElementById('carYear')?.value, 10),
+      bodyType: document.getElementById('carBody')?.value || '',
+      restyling: !!document.getElementById('carRestyling')?.checked
+    };
+
+    const c = this.wizardState.carData;
+    if (!c.carMake || !c.carModel || !c.year || !c.bodyType) {
+      UI.showToast('Заполните все обязательные поля', 'error');
+      return;
+    }
+
+    this.goToStep(2);
+  },
+
+  async goToStep(step) {
+    this.wizardState.step = step;
+
+    document.querySelectorAll('.wizard-step').forEach(stepEl => {
+      const stepNum = parseInt(stepEl.dataset.step, 10);
+      stepEl.classList.remove('active', 'completed');
+      if (stepNum === step) stepEl.classList.add('active');
+      if (stepNum < step) stepEl.classList.add('completed');
+    });
+
+    document.querySelectorAll('.wizard-panel').forEach(panel => panel.classList.remove('active'));
+    document.getElementById(`wizardStep${step}`)?.classList.add('active');
+
+    if (step === 3) {
+      if (!this.inventoryData.length) await this.loadInventory();
+      this.renderPartsDetails();
+    }
+  },
+
+  renderPartsDetails() {
+    const container = document.getElementById('partsDetails');
+    if (!container) return;
+
+    this.priceTouched = new Set();
+
+    const uniqueParts = Array.from(new Set(this.wizardState.selectedParts));
+
+    container.innerHTML = uniqueParts.map((partName) => {
+      const existing = this.wizardState.partsDetails[partName] || {};
+      const condition = existing.condition || 'used';
+
+      const suggestedPrice = (existing.price && existing.price > 0)
+        ? null
+        : this.findSuggestedPrice(partName, condition);
+
+      const priceValue = (existing.price && existing.price > 0)
+        ? existing.price
+        : (suggestedPrice ?? '');
+
+      const imageUrl = existing.imageUrl || '';
+
+      return `
+        <div class="part-detail-card" data-part="${Utils.escapeHtml(partName)}">
+          <div class="part-detail-card__header">
+            <h4 class="part-detail-card__title">${Utils.escapeHtml(partName)}</h4>
+            <button type="button" class="part-detail-card__remove" data-remove="${Utils.escapeHtml(partName)}">✕</button>
+          </div>
+
+          <div class="form-row">
+            <div class="form-group">
+              <label class="form-label">Цена (₽) *</label>
+              <input type="number" class="form-input part-price"
+                data-part="${Utils.escapeHtml(partName)}"
+                value="${priceValue}"
+                min="0" required>
+              ${suggestedPrice != null ? `<div class="muted" style="font-size:12px;">Автоподставлено по складу</div>` : ''}
+            </div>
+
+            <div class="form-group">
+              <label class="form-label">Состояние *</label>
+              <select class="form-select part-condition" data-part="${Utils.escapeHtml(partName)}">
+                <option value="used" ${condition === 'used' ? 'selected' : ''}>Б/У</option>
+                <option value="new" ${condition === 'new' ? 'selected' : ''}>Новое</option>
+              </select>
+            </div>
+          </div>
+
+          <div class="form-group">
+            <label class="form-label">Описание (опционально)</label>
+            <textarea class="form-textarea part-description"
+              data-part="${Utils.escapeHtml(partName)}"
+              rows="2"
+              placeholder="Дополнительная информация о состоянии...">${Utils.escapeHtml(existing.description || '')}</textarea>
+          </div>
+
+          <div class="form-group">
+            <label class="form-label">Фото</label>
+            <div class="image-upload" data-part="${Utils.escapeHtml(partName)}">
+              ${imageUrl
+                ? `<div class="image-upload__preview"><img src="${imageUrl}" alt="${Utils.escapeHtml(partName)}"></div>
+                   <div class="image-upload__text">Нажмите, чтобы заменить</div>`
+                : `<div class="image-upload__icon">📷</div>
+                   <div class="image-upload__text">Перетащите фото или кликните для выбора</div>`
+              }
+              <input type="file" accept="image/*" class="part-image" data-part="${Utils.escapeHtml(partName)}">
+            </div>
+          </div>
+        </div>
+      `;
+    }).join('');
+
+    this.bindPartDetailEvents();
+    this.collectPartDetails(); // фиксируем автоподставленную цену в state
+  },
+
+  bindPartDetailEvents() {
+    // remove part
+    document.querySelectorAll('[data-remove]').forEach(btn => {
+      btn.addEventListener('click', (e) => {
+        const partName = e.currentTarget.dataset.remove;
+        this.removePart(partName);
+      });
+    });
+
+    // uploads
+    document.querySelectorAll('.image-upload').forEach(uploadEl => {
+      const partName = uploadEl.dataset.part;
+
+      uploadEl.addEventListener('click', () => {
+        const input = uploadEl.querySelector('input[type="file"]');
+        input?.click();
+      });
+
+      uploadEl.addEventListener('dragover', (e) => {
+        e.preventDefault();
+        uploadEl.classList.add('dragover');
+      });
+
+      uploadEl.addEventListener('dragleave', () => uploadEl.classList.remove('dragover'));
+
+      uploadEl.addEventListener('drop', (e) => {
+        e.preventDefault();
+        uploadEl.classList.remove('dragover');
+        const file = e.dataTransfer.files?.[0];
+        if (file && file.type.startsWith('image/')) {
+          this.handleImageUpload(partName, file, uploadEl);
+        }
+      });
+
+      uploadEl.querySelector('input[type="file"]')?.addEventListener('change', (e) => {
+        const file = e.target.files?.[0];
+        if (file) this.handleImageUpload(partName, file, uploadEl);
+      });
+    });
+
+    // mark price touched
+    document.querySelectorAll('.part-price').forEach(inp => {
+      inp.addEventListener('input', () => {
+        this.priceTouched.add(inp.dataset.part);
+      });
+    });
+
+    // condition change -> autoprice (if not touched)
+    document.querySelectorAll('.part-condition').forEach(sel => {
+      sel.addEventListener('change', () => {
+        const partName = sel.dataset.part;
+
+        if (!this.priceTouched.has(partName)) {
+          const suggested = this.findSuggestedPrice(partName, sel.value);
+          if (suggested != null) {
+            const card = sel.closest('.part-detail-card');
+            const priceInput = card?.querySelector('.part-price');
+            if (priceInput) priceInput.value = suggested;
+          }
         }
 
-        await this.loadData();
-        
-        // Активные брони (pending, confirmed)
-        const activeReservations = this.reservations.filter(r => 
-            r.status === 'pending' || r.status === 'confirmed'
-        );
-        const pendingCount = this.reservations.filter(r => r.status === 'pending').length;
+        this.collectPartDetails();
+      });
+    });
 
-        Modal.open({
-            title: 'Панель управления',
-            size: 'xl',
-            content: `
-                <div class="admin-panel">
-                    <div class="admin-tabs">
-                        <button class="admin-tab ${this.tab === 'reservations' ? 'active' : ''}" data-tab="reservations">
-                            <i class="fas fa-bookmark"></i>
-                            <span>Брони</span>
-                            ${pendingCount ? `<span class="count">${pendingCount}</span>` : ''}
-                        </button>
-                        <button class="admin-tab ${this.tab === 'inventory' ? 'active' : ''}" data-tab="inventory">
-                            <i class="fas fa-warehouse"></i>
-                            <span>Склад</span>
-                        </button>
-                        <button class="admin-tab ${this.tab === 'add-car' ? 'active' : ''}" data-tab="add-car">
-                            <i class="fas fa-car"></i>
-                            <span>Добавить</span>
-                        </button>
-                        <button class="admin-tab ${this.tab === 'history' ? 'active' : ''}" data-tab="history">
-                            <i class="fas fa-history"></i>
-                            <span>История</span>
-                        </button>
-                    </div>
-                    
-                    <div class="admin-section ${this.tab === 'reservations' ? 'active' : ''}" id="sec-reservations">
-                        ${this.renderReservations()}
-                    </div>
-                    <div class="admin-section ${this.tab === 'inventory' ? 'active' : ''}" id="sec-inventory">
-                        ${this.renderInventory()}
-                    </div>
-                    <div class="admin-section ${this.tab === 'add-car' ? 'active' : ''}" id="sec-add-car">
-                        ${this.renderAddCar()}
-                    </div>
-                    <div class="admin-section ${this.tab === 'history' ? 'active' : ''}" id="sec-history">
-                        ${this.renderHistory()}
-                    </div>
-                </div>
-            `,
-            footer: `<button class="btn btn-secondary" onclick="Modal.closeAll()">Закрыть</button>`
-        });
+    // collect on changes
+    document.querySelectorAll('.part-price, .part-description').forEach(input => {
+      input.addEventListener('change', () => this.collectPartDetails());
+      input.addEventListener('input', Utils.debounce(() => this.collectPartDetails(), 200));
+    });
+  },
 
-        this.bindEvents();
-    },
+  removePart(partName) {
+    this.wizardState.selectedParts = this.wizardState.selectedParts.filter(p => p !== partName);
 
-    async loadData() {
-        try {
-            const [resSnap, invSnap, salesSnap] = await Promise.all([
-                db.collection(DB.RESERVATIONS).orderBy('createdAt', 'desc').get(),
-                db.collection(DB.PARTS).get(),
-                db.collection(DB.SALES).orderBy('completedAt', 'desc').get()
-            ]);
+    // снимаем все одинаковые чекбоксы (если деталь в двух категориях)
+    document.querySelectorAll(`#partsCategories input[type="checkbox"][value="${CSS.escape(partName)}"]`)
+      .forEach(cb => { cb.checked = false; });
 
-            this.reservations = resSnap.docs.map(d => ({ id: d.id, ...d.data() }));
-            this.inventory = invSnap.docs.map(d => ({ id: d.id, ...d.data() }));
-            this.sales = salesSnap.docs.map(d => ({ id: d.id, ...d.data() }));
-            
-            // История = завершенные + отмененные брони
-            this.history = this.reservations.filter(r => 
-                r.status === 'completed' || r.status === 'cancelled'
-            );
-        } catch (e) {
-            console.error('Admin load error:', e);
-            Utils.toast('Ошибка загрузки данных', 'error');
+    document.querySelector(`.part-detail-card[data-part="${CSS.escape(partName)}"]`)?.remove();
+
+    delete this.wizardState.partsDetails[partName];
+
+    this.updateSelectedParts();
+
+    if (this.wizardState.selectedParts.length === 0) {
+      this.goToStep(2);
+    }
+  },
+
+  async handleImageUpload(partName, file, uploadEl) {
+    const reader = new FileReader();
+    reader.onload = (e) => {
+      uploadEl.innerHTML = `
+        <div class="image-upload__preview">
+          <img src="${e.target.result}" alt="${Utils.escapeHtml(partName)}">
+        </div>
+        <div class="image-upload__text">Загрузка...</div>
+        <input type="file" accept="image/*" class="part-image" data-part="${Utils.escapeHtml(partName)}">
+      `;
+    };
+    reader.readAsDataURL(file);
+
+    try {
+      const imageUrl = await this.uploadToCloudinary(file);
+
+      if (!this.wizardState.partsDetails[partName]) this.wizardState.partsDetails[partName] = {};
+      this.wizardState.partsDetails[partName].imageUrl = imageUrl;
+
+      uploadEl.innerHTML = `
+        <div class="image-upload__preview">
+          <img src="${imageUrl}" alt="${Utils.escapeHtml(partName)}">
+        </div>
+        <div class="image-upload__text">✓ Загружено (нажмите, чтобы заменить)</div>
+        <input type="file" accept="image/*" class="part-image" data-part="${Utils.escapeHtml(partName)}">
+      `;
+
+      uploadEl.querySelector('input[type="file"]')?.addEventListener('change', (e) => {
+        const f = e.target.files?.[0];
+        if (f) this.handleImageUpload(partName, f, uploadEl);
+      });
+
+      UI.showToast('Фото загружено', 'success');
+    } catch (err) {
+      console.error('upload error:', err);
+      uploadEl.querySelector('.image-upload__text')?.replaceChildren(document.createTextNode('Ошибка загрузки'));
+      UI.showToast('Ошибка загрузки фото', 'error');
+    }
+  },
+
+  async uploadToCloudinary(file) {
+    const formData = new FormData();
+    formData.append('file', file);
+    formData.append('upload_preset', Config.cloudinary.uploadPreset);
+    formData.append('folder', Config.cloudinary.folder);
+
+    const response = await fetch(`https://api.cloudinary.com/v1_1/${Config.cloudinary.cloudName}/image/upload`, {
+      method: 'POST',
+      body: formData
+    });
+
+    if (!response.ok) throw new Error('Ошибка загрузки в Cloudinary');
+    const data = await response.json();
+    return data.secure_url;
+  },
+
+  collectPartDetails() {
+    document.querySelectorAll('.part-detail-card').forEach(card => {
+      const partName = card.dataset.part;
+      this.wizardState.partsDetails[partName] = {
+        price: parseInt(card.querySelector('.part-price')?.value, 10) || 0,
+        condition: card.querySelector('.part-condition')?.value || 'used',
+        description: (card.querySelector('.part-description')?.value || '').trim(),
+        imageUrl: this.wizardState.partsDetails[partName]?.imageUrl || ''
+      };
+    });
+  },
+
+  async findExistingInventoryDoc(db, productData, inventoryKey) {
+    // 1) inventoryKey
+    let q = await db.collection('inventory')
+      .where('inventoryKey', '==', inventoryKey)
+      .limit(1)
+      .get();
+
+    if (!q.empty) {
+      const doc = q.docs[0];
+      return { ref: doc.ref, data: doc.data(), id: doc.id };
+    }
+
+    // 2) fallback by fields
+    q = await db.collection('inventory')
+      .where('partName', '==', productData.partName)
+      .where('carMake', '==', productData.carMake)
+      .where('carModel', '==', productData.carModel)
+      .where('year', '==', productData.year)
+      .where('bodyType', '==', productData.bodyType)
+      .where('condition', '==', productData.condition)
+      .limit(1)
+      .get();
+
+    if (!q.empty) {
+      const doc = q.docs[0];
+      return { ref: doc.ref, data: doc.data(), id: doc.id, legacy: true };
+    }
+
+    return null;
+  },
+
+  async saveAllParts() {
+    if (this._saving) return;
+    this._saving = true;
+
+    const saveBtn = document.getElementById('saveParts');
+    const btnText = saveBtn?.querySelector('.btn__text');
+    const btnLoader = saveBtn?.querySelector('.btn__loader');
+
+    try {
+      this.collectPartDetails();
+
+      const uniqueParts = Array.from(new Set(this.wizardState.selectedParts));
+
+      for (const partName of uniqueParts) {
+        const d = this.wizardState.partsDetails[partName];
+        if (!d || !d.price || d.price <= 0) {
+          UI.showToast(`Укажите цену для: ${partName}`, 'error');
+          return;
         }
-    },
+      }
 
-    bindEvents() {
-        document.querySelectorAll('.admin-tab').forEach(t => {
-            t.onclick = () => {
-                this.tab = t.dataset.tab;
-                document.querySelectorAll('.admin-tab').forEach(x => x.classList.remove('active'));
-                document.querySelectorAll('.admin-section').forEach(x => x.classList.remove('active'));
-                t.classList.add('active');
-                document.getElementById(`sec-${this.tab}`).classList.add('active');
+      if (saveBtn) saveBtn.disabled = true;
+      if (btnText) btnText.textContent = 'Сохранение...';
+      btnLoader?.classList.remove('hidden');
 
-                if (this.tab === 'add-car') this.bindAddCarEvents();
-            };
-        });
+      const db = firebase.firestore();
+      const batch = db.batch();
 
-        if (this.tab === 'add-car') this.bindAddCarEvents();
-    },
+      let addedCount = 0;
+      let updatedCount = 0;
 
-    // ==================== RESERVATIONS (только активные) ====================
-    renderReservations() {
-        // Только pending и confirmed
-        const activeRes = this.reservations.filter(r => 
-            r.status === 'pending' || r.status === 'confirmed'
-        );
+      const carKey = this.createCarKey(this.wizardState.carData);
 
-        if (!activeRes.length) {
-            return `
-                <div class="empty">
-                    <div class="empty-icon"><i class="fas fa-inbox"></i></div>
-                    <h3 class="empty-title">Нет активных бронирований</h3>
-                    <p class="empty-text">Новые брони появятся здесь</p>
-                </div>
-            `;
-        }
+      for (const partName of uniqueParts) {
+        const details = this.wizardState.partsDetails[partName];
 
-        const stats = {
-            pending: this.reservations.filter(r => r.status === 'pending').length,
-            confirmed: this.reservations.filter(r => r.status === 'confirmed').length
+        const productData = {
+          partName,
+          carMake: this.wizardState.carData.carMake,
+          carModel: this.wizardState.carData.carModel,
+          year: this.wizardState.carData.year,
+          bodyType: this.wizardState.carData.bodyType,
+          restyling: this.wizardState.carData.restyling,
+          price: details.price,
+          condition: details.condition,
+          description: details.description || '',
+          imageUrl: details.imageUrl || ''
         };
 
-        return `
-            <div class="admin-stats">
-                <div class="admin-stat">
-                    <div class="admin-stat-value" style="color:var(--warning)">${stats.pending}</div>
-                    <div class="admin-stat-label">Ожидают</div>
-                </div>
-                <div class="admin-stat">
-                    <div class="admin-stat-value" style="color:var(--primary)">${stats.confirmed}</div>
-                    <div class="admin-stat-label">Подтверждены</div>
-                </div>
-            </div>
-            <div class="reservation-list">
-                ${activeRes.map(r => this.renderResCard(r)).join('')}
-            </div>
-        `;
-    },
+        const inventoryKey = Utils.createInventoryKey(productData);
 
-    renderResCard(r) {
-        const statusColors = { 
-            pending: 'var(--warning)', 
-            confirmed: 'var(--primary)', 
-            completed: 'var(--success)', 
-            cancelled: 'var(--danger)' 
-        };
-        const statusNames = { 
-            pending: 'Ожидает', 
-            confirmed: 'Подтверждено', 
-            completed: 'Завершено', 
-            cancelled: 'Отменено' 
-        };
-
-        return `
-            <div class="reservation-card">
-                <div class="reservation-header">
-                    <span class="reservation-order">${r.orderNumber}</span>
-                    <span class="badge" style="background:${statusColors[r.status]}20;color:${statusColors[r.status]}">
-                        ${statusNames[r.status]}
-                    </span>
-                </div>
-                <div class="reservation-body">
-                    <div class="reservation-info">
-                        <p><i class="fas fa-user"></i> ${r.customerName}</p>
-                        <p><i class="fas fa-phone"></i> ${r.customerPhone}</p>
-                        <p><i class="fas fa-calendar"></i> ${Utils.formatDate(r.createdAt, true)}</p>
-                        ${r.comment ? `<p><i class="fas fa-comment"></i> ${r.comment}</p>` : ''}
-                    </div>
-                    <div class="reservation-items">
-                        ${r.items.map(i => `
-                            <div class="reservation-item">
-                                <strong>${i.name}</strong> — ${i.quantity} шт. × ${Utils.formatPrice(i.price)}
-                            </div>
-                        `).join('')}
-                    </div>
-                </div>
-                <div class="reservation-footer">
-                    <div class="reservation-total">${Utils.formatPrice(r.total)}</div>
-                    <div class="reservation-actions">
-                        ${r.status === 'pending' ? `
-                            <button class="btn btn-success btn-sm" onclick="Admin.confirmRes('${r.id}')">
-                                <i class="fas fa-check"></i> Подтвердить
-                            </button>
-                            <button class="btn btn-danger btn-sm" onclick="Admin.cancelRes('${r.id}')">
-                                <i class="fas fa-times"></i> Отменить
-                            </button>
-                        ` : ''}
-                        ${r.status === 'confirmed' ? `
-                            <button class="btn btn-success btn-sm" onclick="Admin.completeRes('${r.id}')">
-                                <i class="fas fa-shopping-bag"></i> Продать
-                            </button>
-                            <button class="btn btn-danger btn-sm" onclick="Admin.cancelRes('${r.id}')">
-                                <i class="fas fa-times"></i> Отменить
-                            </button>
-                        ` : ''}
-                    </div>
-                </div>
-            </div>
-        `;
-    },
-
-    // Подтверждение брони
-    async confirmRes(id) {
-        const btn = event.target.closest('button');
-        btn.disabled = true;
-        btn.innerHTML = '<i class="fas fa-spinner fa-spin"></i>';
-
-        try {
-            await db.collection(DB.RESERVATIONS).doc(id).update({
-                status: 'confirmed',
-                confirmedAt: firebase.firestore.FieldValue.serverTimestamp()
-            });
-            
-            Utils.toast('Бронирование подтверждено', 'success');
-            await this.refresh();
-        } catch (e) {
-            console.error('Confirm error:', e);
-            Utils.toast('Ошибка: ' + e.message, 'error');
-            btn.disabled = false;
-            btn.innerHTML = '<i class="fas fa-check"></i> Подтвердить';
-        }
-    },
-
-    // Отмена брони - возвращаем reserved
-    async cancelRes(id) {
-        if (!await Modal.confirm({
-            title: 'Отменить бронь?',
-            message: 'Товары снова станут доступны для покупки',
-            type: 'danger',
-            confirmText: 'Отменить бронь'
-        })) return;
-
-        try {
-            const res = this.reservations.find(r => r.id === id);
-            if (!res) throw new Error('Бронирование не найдено');
-
-            // Возвращаем товары (уменьшаем reserved)
-            for (const item of res.items) {
-                const partRef = db.collection(DB.PARTS).doc(item.partId);
-                const partDoc = await partRef.get();
-                
-                if (partDoc.exists) {
-                    const currentReserved = partDoc.data().reserved || 0;
-                    const newReserved = Math.max(0, currentReserved - item.quantity);
-                    
-                    await partRef.update({
-                        reserved: newReserved
-                    });
-                }
-            }
-
-            // Обновляем статус
-            await db.collection(DB.RESERVATIONS).doc(id).update({
-                status: 'cancelled',
-                cancelledAt: firebase.firestore.FieldValue.serverTimestamp()
-            });
-
-            Utils.toast('Бронирование отменено, товары возвращены', 'info');
-            
-            // Обновляем каталог
-            await Catalog.load();
-            Catalog.applyFilters();
-            Catalog.renderParts();
-            
-            await this.refresh();
-        } catch (e) {
-            console.error('Cancel error:', e);
-            Utils.toast('Ошибка: ' + e.message, 'error');
-        }
-    },
-
-    // Завершение продажи - списываем товары
-    async completeRes(id) {
-        const res = this.reservations.find(r => r.id === id);
-        if (!res) return;
-
-        if (!await Modal.confirm({
-            title: 'Завершить продажу?',
-            message: 'Товары будут списаны со склада и добавлены в историю продаж',
-            type: 'success',
-            confirmText: 'Продать'
-        })) return;
-
-        try {
-            // Списываем товары
-            for (const item of res.items) {
-                const partRef = db.collection(DB.PARTS).doc(item.partId);
-                const partDoc = await partRef.get();
-
-                if (partDoc.exists) {
-                    const data = partDoc.data();
-                    const newQuantity = Math.max(0, (data.quantity || 0) - item.quantity);
-                    const newReserved = Math.max(0, (data.reserved || 0) - item.quantity);
-
-                    if (newQuantity <= 0) {
-                        // Удаляем товар если quantity = 0
-                        await partRef.delete();
-                        console.log(`Deleted part ${item.partId} (quantity = 0)`);
-                    } else {
-                        await partRef.update({
-                            quantity: newQuantity,
-                            reserved: newReserved
-                        });
-                        console.log(`Updated part ${item.partId}: qty=${newQuantity}, res=${newReserved}`);
-                    }
-                }
-            }
-
-            // Обновляем статус бронирования
-            await db.collection(DB.RESERVATIONS).doc(id).update({
-                status: 'completed',
-                completedAt: firebase.firestore.FieldValue.serverTimestamp()
-            });
-
-            // Добавляем в продажи
-            await db.collection(DB.SALES).add({
-                ...res,
-                reservationId: id,
-                completedAt: firebase.firestore.FieldValue.serverTimestamp()
-            });
-
-            Utils.toast('Продажа завершена!', 'success');
-
-            // Печатаем чек
-            Reservations.printReceipt({
-                ...res,
-                completedAt: new Date()
-            });
-
-            // Обновляем каталог
-            await Catalog.load();
-            Catalog.applyFilters();
-            Catalog.renderParts();
-            App.updateStats();
-
-            await this.refresh();
-        } catch (e) {
-            console.error('Complete error:', e);
-            Utils.toast('Ошибка: ' + e.message, 'error');
-        }
-    },
-
-    // ==================== HISTORY (завершенные и отмененные) ====================
-    renderHistory() {
-        // Объединяем продажи и отмененные брони
-        const completed = this.reservations.filter(r => r.status === 'completed');
-        const cancelled = this.reservations.filter(r => r.status === 'cancelled');
-        
-        const totalSales = this.sales.reduce((s, x) => s + (x.total || 0), 0);
-
-        if (!completed.length && !cancelled.length) {
-            return `
-                <div class="empty">
-                    <div class="empty-icon"><i class="fas fa-history"></i></div>
-                    <h3 class="empty-title">История пуста</h3>
-                    <p class="empty-text">Завершенные и отмененные заказы появятся здесь</p>
-                </div>
-            `;
-        }
-
-        return `
-            <div class="admin-stats">
-                <div class="admin-stat">
-                    <div class="admin-stat-value" style="color:var(--success)">${Utils.formatPrice(totalSales)}</div>
-                    <div class="admin-stat-label">Сумма продаж</div>
-                </div>
-                <div class="admin-stat">
-                    <div class="admin-stat-value" style="color:var(--success)">${completed.length}</div>
-                    <div class="admin-stat-label">Продано</div>
-                </div>
-                <div class="admin-stat">
-                    <div class="admin-stat-value" style="color:var(--danger)">${cancelled.length}</div>
-                    <div class="admin-stat-label">Отменено</div>
-                </div>
-            </div>
-            
-            <div class="reservation-list">
-                ${this.history.map(r => this.renderHistoryCard(r)).join('')}
-            </div>
-        `;
-    },
-
-    renderHistoryCard(r) {
-        const isCompleted = r.status === 'completed';
-        const statusColor = isCompleted ? 'var(--success)' : 'var(--danger)';
-        const statusName = isCompleted ? 'Продано' : 'Отменено';
-        const date = Utils.formatDate(r.completedAt || r.cancelledAt || r.createdAt, true);
-
-        return `
-            <div class="reservation-card">
-                <div class="reservation-header">
-                    <span class="reservation-order">${r.orderNumber}</span>
-                    <span class="badge" style="background:${statusColor}20;color:${statusColor}">
-                        ${statusName}
-                    </span>
-                </div>
-                <div class="reservation-body">
-                    <div class="reservation-info">
-                        <p><i class="fas fa-user"></i> ${r.customerName}</p>
-                        <p><i class="fas fa-phone"></i> ${r.customerPhone}</p>
-                        <p><i class="fas fa-calendar"></i> ${date}</p>
-                    </div>
-                    <div class="reservation-items">
-                        ${r.items.map(i => `
-                            <div class="reservation-item">
-                                <strong>${i.name}</strong> — ${i.quantity} шт. × ${Utils.formatPrice(i.price)}
-                            </div>
-                        `).join('')}
-                    </div>
-                </div>
-                <div class="reservation-footer">
-                    <div class="reservation-total">${Utils.formatPrice(r.total)}</div>
-                    <div class="reservation-actions">
-                        <button class="btn btn-secondary btn-sm" onclick="Admin.showOrderDetails('${r.id}')">
-                            <i class="fas fa-eye"></i> Детали
-                        </button>
-                        ${isCompleted ? `
-                            <button class="btn btn-primary btn-sm" onclick="Admin.printOrderReceipt('${r.id}')">
-                                <i class="fas fa-print"></i> Чек
-                            </button>
-                        ` : ''}
-                    </div>
-                </div>
-            </div>
-        `;
-    },
-
-    showOrderDetails(id) {
-        const order = this.reservations.find(r => r.id === id) || this.sales.find(s => s.id === id);
-        if (!order) return;
-
-        const isCompleted = order.status === 'completed';
-        const date = Utils.formatDate(order.completedAt || order.cancelledAt || order.createdAt, true);
-
-        Modal.open({
-            title: `Заказ ${order.orderNumber}`,
-            size: 'md',
-            content: `
-                <div style="margin-bottom:20px;">
-                    <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:16px;">
-                        <span class="badge ${isCompleted ? 'badge-success' : 'badge-danger'}" style="font-size:13px;padding:6px 12px;">
-                            ${isCompleted ? 'Продано' : 'Отменено'}
-                        </span>
-                        <span style="color:var(--gray-500);font-size:14px;">${date}</span>
-                    </div>
-                    
-                    <div style="background:var(--gray-50);padding:16px;border-radius:var(--radius);margin-bottom:16px;">
-                        <h4 style="margin-bottom:12px;font-size:14px;color:var(--gray-600);">Клиент</h4>
-                        <p style="margin-bottom:4px;"><strong>${order.customerName}</strong></p>
-                        <p style="color:var(--gray-600);font-size:14px;">${order.customerPhone}</p>
-                        ${order.comment ? `<p style="color:var(--gray-500);font-size:13px;margin-top:8px;"><i class="fas fa-comment"></i> ${order.comment}</p>` : ''}
-                    </div>
-                    
-                    <div style="background:var(--gray-50);padding:16px;border-radius:var(--radius);margin-bottom:16px;">
-                        <h4 style="margin-bottom:12px;font-size:14px;color:var(--gray-600);">Товары</h4>
-                        ${order.items.map(i => `
-                            <div style="display:flex;justify-content:space-between;padding:8px 0;border-bottom:1px solid var(--gray-200);">
-                                <div>
-                                    <strong>${i.name}</strong><br>
-                                    <span style="font-size:12px;color:var(--gray-500);">${i.brand} ${i.model} ${i.year}</span>
-                                </div>
-                                <div style="text-align:right;">
-                                    <div>${i.quantity} × ${Utils.formatPrice(i.price)}</div>
-                                    <div style="font-weight:600;color:var(--primary);">${Utils.formatPrice(i.price * i.quantity)}</div>
-                                </div>
-                            </div>
-                        `).join('')}
-                    </div>
-                    
-                    <div style="display:flex;justify-content:space-between;padding:16px;background:var(--primary);color:white;border-radius:var(--radius);">
-                        <span style="font-size:18px;font-weight:600;">Итого:</span>
-                        <span style="font-size:24px;font-weight:700;">${Utils.formatPrice(order.total)}</span>
-                    </div>
-                </div>
-            `,
-            footer: `
-                ${isCompleted ? `
-                    <button class="btn btn-primary" onclick="Admin.printOrderReceipt('${id}')">
-                        <i class="fas fa-print"></i> Печать чека
-                    </button>
-                ` : ''}
-                <button class="btn btn-secondary" onclick="Modal.closeAll()">Закрыть</button>
-            `
-        });
-    },
-
-    printOrderReceipt(id) {
-        const order = this.reservations.find(r => r.id === id) || this.sales.find(s => s.id === id || s.reservationId === id);
-        if (order) {
-            Reservations.printReceipt(order);
-        }
-    },
-
-    // ==================== INVENTORY ====================
-    renderInventory() {
-        if (!this.inventory.length) {
-            return `
-                <div class="empty">
-                    <div class="empty-icon"><i class="fas fa-box-open"></i></div>
-                    <h3 class="empty-title">Склад пуст</h3>
-                    <p class="empty-text">Добавьте автомобиль с запчастями</p>
-                </div>
-            `;
-        }
-
-        return `
-            <div class="table-wrapper">
-                <table class="data-table">
-                    <thead>
-                        <tr>
-                            <th>Название</th>
-                            <th>Авто</th>
-                            <th>Цена</th>
-                            <th>Всего</th>
-                            <th>Брон.</th>
-                            <th>Дост.</th>
-                            <th></th>
-                        </tr>
-                    </thead>
-                    <tbody>
-                        ${this.inventory.map(p => {
-                            const reserved = p.reserved || 0;
-                            const available = Math.max(0, (p.quantity || 0) - reserved);
-                            return `
-                                <tr>
-                                    <td><strong>${p.name}</strong></td>
-                                    <td style="font-size:12px;">${p.brand} ${p.model} ${p.year}</td>
-                                    <td>${Utils.formatPrice(p.price)}</td>
-                                    <td>${p.quantity || 0}</td>
-                                    <td>${reserved > 0 ? `<span class="badge badge-warning">${reserved}</span>` : '-'}</td>
-                                    <td><span class="badge ${available > 0 ? 'badge-success' : 'badge-danger'}">${available}</span></td>
-                                    <td>
-                                        <div class="table-actions">
-                                            <button class="table-btn edit" onclick="Admin.editPart('${p.id}')" title="Редактировать">
-                                                <i class="fas fa-edit"></i>
-                                            </button>
-                                            <button class="table-btn delete" onclick="Admin.deletePart('${p.id}')" title="Удалить">
-                                                <i class="fas fa-trash"></i>
-                                            </button>
-                                        </div>
-                                    </td>
-                                </tr>
-                            `;
-                        }).join('')}
-                    </tbody>
-                </table>
-            </div>
-        `;
-    },
-
-    async editPart(id) {
-        const p = this.inventory.find(x => x.id === id);
-        if (!p) return;
-
-        const reserved = p.reserved || 0;
-
-        Modal.open({
-            title: 'Редактирование',
-            size: 'sm',
-            content: `
-                <form id="edit-form">
-                    <div class="form-group">
-                        <label class="form-label">Название</label>
-                        <input type="text" class="form-input" name="name" value="${p.name}" required>
-                    </div>
-                    <div class="form-row">
-                        <div class="form-group">
-                            <label class="form-label">Цена</label>
-                            <input type="number" class="form-input" name="price" value="${p.price}" required min="0">
-                        </div>
-                        <div class="form-group">
-                            <label class="form-label">Количество</label>
-                            <input type="number" class="form-input" name="quantity" value="${p.quantity}" required min="${reserved}">
-                            ${reserved > 0 ? `<span class="form-hint">Мин: ${reserved} (забронировано)</span>` : ''}
-                        </div>
-                    </div>
-                    <div class="form-group">
-                        <label class="form-label">Состояние</label>
-                        <select class="form-input" name="condition">
-                            ${CONDITIONS.map(c => `<option value="${c.id}" ${c.id === p.condition ? 'selected' : ''}>${c.name}</option>`).join('')}
-                        </select>
-                    </div>
-                </form>
-            `,
-            footer: `
-                <button class="btn btn-secondary" onclick="Modal.closeAll()">Отмена</button>
-                <button class="btn btn-primary" type="submit" form="edit-form">Сохранить</button>
-            `
-        });
-
-        document.getElementById('edit-form').onsubmit = async (e) => {
-            e.preventDefault();
-            const fd = new FormData(e.target);
-            const newQty = parseInt(fd.get('quantity'));
-
-            if (newQty < reserved) {
-                Utils.toast(`Нельзя уменьшить ниже ${reserved} (забронировано)`, 'error');
-                return;
-            }
-
-            try {
-                await db.collection(DB.PARTS).doc(id).update({
-                    name: fd.get('name'),
-                    price: parseFloat(fd.get('price')),
-                    quantity: newQty,
-                    condition: fd.get('condition'),
-                    updatedAt: firebase.firestore.FieldValue.serverTimestamp()
-                });
-
-                Modal.closeAll();
-                Utils.toast('Сохранено', 'success');
-                
-                await Catalog.load();
-                Catalog.applyFilters();
-                Catalog.renderParts();
-                
-                await this.refresh();
-            } catch (e) {
-                Utils.toast('Ошибка: ' + e.message, 'error');
-            }
-        };
-    },
-
-    async deletePart(id) {
-        const p = this.inventory.find(x => x.id === id);
-        if (!p) return;
-
-        const reserved = p.reserved || 0;
-        if (reserved > 0) {
-            Utils.toast('Нельзя удалить товар с активными бронями', 'error');
-            return;
-        }
-
-        if (!await Modal.confirm({
-            title: 'Удалить товар?',
-            message: `${p.name} будет удален со склада`,
-            type: 'danger',
-            confirmText: 'Удалить'
-        })) return;
-
-        try {
-            await db.collection(DB.PARTS).doc(id).delete();
-            Utils.toast('Товар удален', 'success');
-            
-            await Catalog.load();
-            Catalog.applyFilters();
-            Catalog.renderParts();
-            
-            await this.refresh();
-        } catch (e) {
-            Utils.toast('Ошибка: ' + e.message, 'error');
-        }
-    },
-
-    // ==================== ADD CAR ====================
-    renderAddCar() {
-        this.selectedParts = {};
-        return `
-            <div class="car-form-section">
-                <h3><i class="fas fa-car"></i> Информация об автомобиле</h3>
-                <div class="car-form-grid">
-                    <div class="form-group">
-                        <label class="form-label required">Марка</label>
-                        <select class="form-input" id="car-brand">
-                            <option value="">Выберите</option>
-                            ${Object.keys(CAR_BRANDS).map(b => `<option value="${b}">${b}</option>`).join('')}
-                        </select>
-                    </div>
-                    <div class="form-group">
-                        <label class="form-label required">Модель</label>
-                        <select class="form-input" id="car-model" disabled>
-                            <option value="">Сначала марку</option>
-                        </select>
-                    </div>
-                    <div class="form-group">
-                        <label class="form-label required">Год</label>
-                        <select class="form-input" id="car-year">
-                            <option value="">Выберите</option>
-                            ${Array.from({ length: 30 }, (_, i) => 2024 - i).map(y => `<option value="${y}">${y}</option>`).join('')}
-                        </select>
-                    </div>
-                    <div class="form-group">
-                        <label class="form-label required">Кузов</label>
-                        <select class="form-input" id="car-body">
-                            <option value="">Выберите</option>
-                            ${BODY_TYPES.map(t => `<option value="${t}">${t}</option>`).join('')}
-                        </select>
-                    </div>
-                    <div class="form-group">
-                        <label class="form-label">Рестайлинг</label>
-                        <select class="form-input" id="car-restyle">
-                            <option value="no">Нет</option>
-                            <option value="yes">Да</option>
-                        </select>
-                    </div>
-                </div>
-            </div>
-            
-            <div class="car-form-section">
-                <h3><i class="fas fa-cogs"></i> Запчасти</h3>
-                <p style="font-size:13px;color:var(--gray-500);margin-bottom:12px;">Отметьте имеющиеся запчасти</p>
-                <div class="parts-list" id="parts-list">
-                    ${PARTS_LIST.map(p => `
-                        <label class="part-check" data-pid="${p.id}">
-                            <input type="checkbox" onchange="Admin.togglePart('${p.id}',this.checked)">
-                            <div>
-                                <div class="part-check-name">${p.name}</div>
-                                <div class="part-check-cat">${p.cat}</div>
-                            </div>
-                        </label>
-                    `).join('')}
-                </div>
-                <div id="part-forms"></div>
-            </div>
-            
-            <button class="btn btn-primary btn-lg btn-block" onclick="Admin.saveCar()" id="save-car-btn">
-                <i class="fas fa-save"></i> Сохранить
-            </button>
-        `;
-    },
-
-    bindAddCarEvents() {
-        const brand = document.getElementById('car-brand');
-        const model = document.getElementById('car-model');
-
-        if (brand) {
-            brand.onchange = () => {
-                const b = brand.value;
-                if (b && CAR_BRANDS[b]) {
-                    model.disabled = false;
-                    model.innerHTML = `<option value="">Выберите</option>` + 
-                        CAR_BRANDS[b].map(m => `<option value="${m}">${m}</option>`).join('');
-                } else {
-                    model.disabled = true;
-                    model.innerHTML = '<option value="">Сначала марку</option>';
-                }
-            };
-        }
-    },
-
-    async togglePart(pid, checked) {
-        const pDef = PARTS_LIST.find(p => p.id === pid);
-        if (!pDef) return;
-
-        const el = document.querySelector(`.part-check[data-pid="${pid}"]`);
-
-        if (checked) {
-            el.classList.add('selected');
-            this.selectedParts[pid] = { ...pDef, price: 0, condition: 'good', isAssembly: false, images: [] };
-            await this.renderPartForm(pid);
-        } else {
-            el.classList.remove('selected');
-            delete this.selectedParts[pid];
-            document.getElementById(`pf-${pid}`)?.remove();
-        }
-    },
-
-    async renderPartForm(pid) {
-        const part = this.selectedParts[pid];
-        const container = document.getElementById('part-forms');
-
-        const brand = document.getElementById('car-brand').value;
-        const model = document.getElementById('car-model').value;
-        const year = document.getElementById('car-year').value;
-
-        let existing = null;
-        if (brand && model && year) {
-            const snap = await db.collection(DB.PARTS)
-                .where('brand', '==', brand)
-                .where('model', '==', model)
-                .where('year', '==', year)
-                .where('partType', '==', pid)
-                .limit(1).get();
-            if (!snap.empty) existing = { id: snap.docs[0].id, ...snap.docs[0].data() };
-        }
-
-        const html = `
-            <div class="part-form" id="pf-${pid}">
-                <div class="part-form-header">
-                    <span class="part-form-title"><i class="fas fa-cog"></i> ${part.name}</span>
-                    <button class="btn btn-ghost btn-sm" onclick="Admin.removePartForm('${pid}')">
-                        <i class="fas fa-times"></i>
-                    </button>
-                </div>
-                ${existing ? `
-                    <div style="background:#dbeafe;padding:10px;border-radius:var(--radius);margin-bottom:12px;font-size:13px;">
-                        <i class="fas fa-info-circle" style="color:var(--primary)"></i>
-                        <strong>Найден на складе:</strong> ${Utils.formatPrice(existing.price)} | ${existing.quantity} шт.
-                        <br><span style="color:var(--gray-500)">Количество увеличится на 1</span>
-                    </div>
-                ` : ''}
-                <div class="part-form-grid">
-                    <div class="form-group">
-                        <label class="form-label required">Цена</label>
-                        <input type="number" class="form-input" id="pp-${pid}" value="${existing?.price || ''}" placeholder="0" required min="0">
-                    </div>
-                    <div class="form-group">
-                        <label class="form-label">Состояние</label>
-                        <select class="form-input" id="pc-${pid}">
-                            ${CONDITIONS.map(c => `<option value="${c.id}" ${c.id === (existing?.condition || 'good') ? 'selected' : ''}>${c.name}</option>`).join('')}
-                        </select>
-                    </div>
-                    ${part.assembly ? `
-                        <div class="form-group">
-                            <label class="form-label">В сборе</label>
-                            <select class="form-input" id="pa-${pid}">
-                                <option value="no">Нет</option>
-                                <option value="yes">Да</option>
-                            </select>
-                        </div>
-                    ` : ''}
-                </div>
-                <div class="form-group">
-                    <label class="form-label">Фото</label>
-                    <div class="image-upload" onclick="document.getElementById('pi-${pid}').click()">
-                        <i class="fas fa-cloud-upload-alt"></i>
-                        <p>Нажмите для загрузки</p>
-                    </div>
-                    <input type="file" id="pi-${pid}" multiple accept="image/*" style="display:none" onchange="Admin.uploadImages('${pid}',this.files)">
-                    <div class="image-previews" id="ipv-${pid}"></div>
-                </div>
-            </div>
-        `;
-
-        container.insertAdjacentHTML('beforeend', html);
+        const existing = await this.findExistingInventoryDoc(db, productData, inventoryKey);
 
         if (existing) {
-            this.selectedParts[pid].existingId = existing.id;
-            this.selectedParts[pid].existingQty = existing.quantity;
+          const prev = existing.data || {};
+          batch.update(existing.ref, {
+            stock: firebase.firestore.FieldValue.increment(1),
+            price: productData.price,
+            description: productData.description || prev.description || '',
+            imageUrl: productData.imageUrl || prev.imageUrl || '',
+            inventoryKey,
+            carKey,
+            updatedAt: firebase.firestore.FieldValue.serverTimestamp()
+          });
+          updatedCount++;
+        } else {
+          const ref = db.collection('inventory').doc();
+          batch.set(ref, {
+            ...productData,
+            inventoryKey,
+            carKey,
+            stock: 1,
+            createdAt: firebase.firestore.FieldValue.serverTimestamp(),
+            updatedAt: firebase.firestore.FieldValue.serverTimestamp()
+          });
+          addedCount++;
         }
-    },
+      }
 
-    removePartForm(pid) {
-        const cb = document.querySelector(`.part-check[data-pid="${pid}"] input`);
-        if (cb) cb.checked = false;
-        document.querySelector(`.part-check[data-pid="${pid}"]`)?.classList.remove('selected');
-        delete this.selectedParts[pid];
-        document.getElementById(`pf-${pid}`)?.remove();
-    },
+      await batch.commit();
 
-    async uploadImages(pid, files) {
-        const preview = document.getElementById(`ipv-${pid}`);
-        for (const f of files) {
-            try {
-                const reader = new FileReader();
-                reader.onload = (e) => {
-                    preview.innerHTML += `
-                        <div class="img-preview">
-                            <img src="${e.target.result}">
-                            <button onclick="this.parentElement.remove()"><i class="fas fa-times"></i></button>
-                        </div>
-                    `;
-                };
-                reader.readAsDataURL(f);
+      UI.showToast(`Сохранено! Добавлено: ${addedCount}, Обновлено: ${updatedCount}`, 'success');
 
-                const url = await Utils.uploadImage(f);
-                this.selectedParts[pid].images.push(url);
-            } catch (e) {
-                Utils.toast('Ошибка загрузки фото', 'error');
-            }
-        }
-    },
+      await this.loadInventory();
+      this.resetWizard();
+      await this.switchTab('inventory');
 
-    async saveCar() {
-        const brand = document.getElementById('car-brand').value;
-        const model = document.getElementById('car-model').value;
-        const year = document.getElementById('car-year').value;
-        const body = document.getElementById('car-body').value;
-        const restyle = document.getElementById('car-restyle').value === 'yes';
-
-        if (!brand || !model || !year || !body) {
-            Utils.toast('Заполните все поля автомобиля', 'error');
-            return;
-        }
-
-        if (!Object.keys(this.selectedParts).length) {
-            Utils.toast('Выберите хотя бы одну запчасть', 'error');
-            return;
-        }
-
-        const btn = document.getElementById('save-car-btn');
-        btn.disabled = true;
-        btn.innerHTML = '<i class="fas fa-spinner fa-spin"></i> Сохранение...';
-
-        try {
-            // Сохраняем авто
-            const carRef = await db.collection(DB.CARS).add({
-                brand, model, year, bodyType: body, restyling: restyle,
-                createdAt: firebase.firestore.FieldValue.serverTimestamp()
-            });
-
-            // Сохраняем запчасти
-            for (const [pid, part] of Object.entries(this.selectedParts)) {
-                const price = parseFloat(document.getElementById(`pp-${pid}`).value);
-                const condition = document.getElementById(`pc-${pid}`).value;
-                const isAssembly = document.getElementById(`pa-${pid}`)?.value === 'yes';
-
-                if (!price || price <= 0) {
-                    Utils.toast(`Укажите цену для ${part.name}`, 'error');
-                    btn.disabled = false;
-                    btn.innerHTML = '<i class="fas fa-save"></i> Сохранить';
-                    return;
-                }
-
-                if (part.existingId) {
-                    // Увеличиваем количество существующего
-                    const partRef = db.collection(DB.PARTS).doc(part.existingId);
-                    const partDoc = await partRef.get();
-                    if (partDoc.exists) {
-                        await partRef.update({
-                            quantity: (partDoc.data().quantity || 0) + 1,
-                            updatedAt: firebase.firestore.FieldValue.serverTimestamp()
-                        });
-                    }
-                } else {
-                    // Создаем новый товар
-                    await db.collection(DB.PARTS).add({
-                        partType: pid,
-                        name: part.name,
-                        category: part.cat,
-                        brand, model, year, bodyType: body, restyling: restyle,
-                        price, condition, isAssembly,
-                        quantity: 1,
-                        reserved: 0,
-                        images: part.images,
-                        carId: carRef.id,
-                        createdAt: firebase.firestore.FieldValue.serverTimestamp()
-                    });
-                }
-            }
-
-            Utils.toast('Сохранено!', 'success');
-            
-            await Catalog.load();
-            Catalog.applyFilters();
-            Catalog.renderParts();
-            App.updateStats();
-
-            // Сбрасываем форму
-            this.selectedParts = {};
-            document.getElementById('sec-add-car').innerHTML = this.renderAddCar();
-            this.bindAddCarEvents();
-
-        } catch (e) {
-            console.error('Save error:', e);
-            Utils.toast('Ошибка: ' + e.message, 'error');
-        } finally {
-            btn.disabled = false;
-            btn.innerHTML = '<i class="fas fa-save"></i> Сохранить';
-        }
-    },
-
-    // ==================== REFRESH ====================
-    async refresh() {
-        await this.loadData();
-        document.getElementById('sec-reservations').innerHTML = this.renderReservations();
-        document.getElementById('sec-inventory').innerHTML = this.renderInventory();
-        document.getElementById('sec-history').innerHTML = this.renderHistory();
+    } catch (err) {
+      console.error('saveAllParts error:', err);
+      UI.showToast('Ошибка при сохранении', 'error');
+    } finally {
+      if (saveBtn) saveBtn.disabled = false;
+      if (btnText) btnText.textContent = 'Сохранить всё';
+      btnLoader?.classList.add('hidden');
+      this._saving = false;
     }
+  },
+
+  resetWizard() {
+    this.wizardState = { step: 1, carData: {}, selectedParts: [], partsDetails: {} };
+    this.priceTouched = new Set();
+
+    document.getElementById('carInfoForm')?.reset();
+    document.querySelectorAll('#partsCategories input[type="checkbox"]').forEach(cb => cb.checked = false);
+
+    this.updateSelectedParts();
+    this.goToStep(1);
+  },
+
+  // =====================================================
+  // INVENTORY
+  // =====================================================
+  async loadInventory() {
+    try {
+      const snapshot = await firebase.firestore().collection('inventory').get();
+      this.inventoryData = snapshot.docs.map(doc => ({ id: doc.id, ...doc.data() }));
+
+      // сортировка по updatedAt/createdAt
+      this.inventoryData.sort((a, b) => this.getTsMillis(b) - this.getTsMillis(a));
+
+      this.renderInventory(this.inventoryData);
+
+      // если открыта вкладка авто — обновим
+      if (!document.getElementById('tabCars')?.classList.contains('hidden')) {
+        this.refreshCarsTab();
+      }
+
+    } catch (err) {
+      console.error('loadInventory error:', err);
+      UI.showToast('Ошибка загрузки склада', 'error');
+    }
+  },
+
+  renderInventory(items) {
+    const tbody = document.getElementById('inventoryBody');
+    if (!tbody) return;
+
+    if (!items.length) {
+      tbody.innerHTML = `
+        <tr>
+          <td colspan="7" style="text-align:center;padding:2rem;color:var(--color-text-secondary);">
+            Склад пуст
+          </td>
+        </tr>
+      `;
+      return;
+    }
+
+    tbody.innerHTML = items.map(item => {
+      const imageUrl = item.imageUrl || 'data:image/svg+xml,%3Csvg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="%236c6c80"%3E%3Cpath d="M21 19V5c0-1.1-.9-2-2-2H5c-1.1 0-2 .9-2 2v14c0 1.1.9 2 2 2h14c1.1 0 2-.9 2-2zM8.5 13.5l2.5 3.01L14.5 12l4.5 6H5l3.5-4.5z"/%3E%3C/svg%3E';
+      const conditionText = item.condition === 'new' ? 'Новое' : 'Б/У';
+      const stock = item.stock || 0;
+      const stockStyle = stock <= 2 ? 'style="color: var(--color-warning)"' : '';
+
+      return `
+        <tr data-id="${item.id}">
+          <td><img src="${imageUrl}" alt="" class="inventory-table__image"></td>
+          <td>${Utils.escapeHtml(item.partName || '')}</td>
+          <td>${Utils.escapeHtml(Utils.formatCarName(item))}</td>
+          <td>${conditionText}</td>
+          <td>${Utils.formatPrice(item.price || 0)}</td>
+          <td ${stockStyle}>${stock}</td>
+          <td class="inventory-table__actions">
+            <button class="btn btn--sm btn--secondary" onclick="Admin.editProduct('${item.id}')">✎</button>
+          </td>
+        </tr>
+      `;
+    }).join('');
+  },
+
+  filterInventory(query) {
+    const q = (query || '').toLowerCase().trim();
+    const filtered = this.inventoryData.filter(item =>
+      (item.partName || '').toLowerCase().includes(q) ||
+      (item.carMake || '').toLowerCase().includes(q) ||
+      (item.carModel || '').toLowerCase().includes(q)
+    );
+    this.renderInventory(filtered);
+  },
+
+  sortInventory(sortBy) {
+    const sorted = [...this.inventoryData];
+
+    if (sortBy === 'stock_asc') sorted.sort((a, b) => (a.stock || 0) - (b.stock || 0));
+    if (sortBy === 'stock_desc') sorted.sort((a, b) => (b.stock || 0) - (a.stock || 0));
+    if (sortBy === 'name_asc') sorted.sort((a, b) => (a.partName || '').localeCompare(b.partName || ''));
+    if (sortBy === 'price_asc') sorted.sort((a, b) => (a.price || 0) - (b.price || 0));
+
+    this.renderInventory(sorted);
+  },
+
+  editProduct(productId) {
+    const product = this.inventoryData.find(p => p.id === productId);
+    if (!product) return;
+
+    this.editingProduct = product;
+
+    document.getElementById('editProductId').value = product.id;
+    document.getElementById('editPrice').value = product.price ?? 0;
+    document.getElementById('editStock').value = product.stock ?? 0;
+    document.getElementById('editDescription').value = product.description || '';
+
+    UI.openModal('editProductModal');
+  },
+
+  async handleEditSubmit(e) {
+    e.preventDefault();
+
+    const productId = document.getElementById('editProductId').value;
+    const price = parseInt(document.getElementById('editPrice').value, 10);
+    const stock = parseInt(document.getElementById('editStock').value, 10);
+    const description = (document.getElementById('editDescription').value || '').trim();
+
+    try {
+      await firebase.firestore().collection('inventory').doc(productId).update({
+        price,
+        stock,
+        description,
+        updatedAt: firebase.firestore.FieldValue.serverTimestamp()
+      });
+
+      UI.showToast('Товар обновлен', 'success');
+      UI.closeModal('editProductModal');
+      await this.loadInventory();
+    } catch (err) {
+      console.error('handleEditSubmit error:', err);
+      UI.showToast('Ошибка при обновлении', 'error');
+    }
+  },
+
+  async deleteProduct() {
+    if (!this.editingProduct) return;
+
+    const confirmed = await UI.confirm(
+      'Удаление товара',
+      `Вы уверены, что хотите удалить "${this.editingProduct.partName}"?`
+    );
+    if (!confirmed) return;
+
+    try {
+      await firebase.firestore().collection('inventory').doc(this.editingProduct.id).delete();
+      UI.showToast('Товар удален', 'success');
+      UI.closeModal('editProductModal');
+      await this.loadInventory();
+    } catch (err) {
+      console.error('deleteProduct error:', err);
+      UI.showToast('Ошибка при удалении', 'error');
+    }
+  },
+
+  // =====================================================
+  // ORDERS (без where-in + orderBy)
+  // =====================================================
+  async loadOrders() {
+    try {
+      const snapshot = await firebase.firestore().collection('orders').get();
+      const all = snapshot.docs.map(doc => ({ id: doc.id, ...doc.data() }));
+
+      all.sort((a, b) => this.getTsMillis(b) - this.getTsMillis(a));
+      this.ordersData = all.filter(o => ['active', 'confirmed', 'ready'].includes(o.status));
+
+      this.renderOrders();
+    } catch (err) {
+      console.error('loadOrders error:', err);
+      UI.showToast('Не удалось загрузить бронирования', 'error');
+    }
+  },
+
+  renderOrders() {
+    const container = document.getElementById('ordersList');
+    if (!container) return;
+
+    if (!this.ordersData.length) {
+      container.innerHTML = `<div class="empty-state"><p>Нет активных бронирований</p></div>`;
+      return;
+    }
+
+    container.innerHTML = this.ordersData.map(order => {
+      const statusInfo = Config.orderStatuses[order.status] || { label: order.status, class: 'active' };
+      const total = (order.items || []).reduce((sum, item) => sum + (item.price || 0), 0);
+
+      return `
+        <div class="order-card" data-order-id="${order.id}">
+          <div class="order-card__header">
+            <div>
+              <span class="order-card__id">Заказ #${Utils.escapeHtml(order.orderNumber || order.id.slice(-8))}</span>
+              <span class="order-card__date">${Utils.formatDate(order.date || order.createdAt || null, true)}</span>
+            </div>
+            <span class="order-card__status order-card__status--${statusInfo.class}">${statusInfo.label}</span>
+          </div>
+
+          <div class="order-card__user">
+            <strong>Клиент:</strong> ${Utils.escapeHtml(order.userName || order.userEmail || 'Неизвестно')}
+          </div>
+
+          <div class="order-card__items">
+            ${(order.items || []).map(item => `
+              <div class="order-item">
+                <span>${Utils.escapeHtml(item.partName)}</span>
+                <span>${Utils.formatPrice(item.price || 0)}</span>
+              </div>
+            `).join('')}
+          </div>
+
+          <div class="order-card__total">
+            <span>Итого:</span>
+            <span>${Utils.formatPrice(total)}</span>
+          </div>
+
+          <div class="order-card__actions">
+            ${order.status === 'active' ? `
+              <button class="btn btn--sm btn--secondary" onclick="Admin.updateOrderStatus('${order.id}', 'ready')">
+                Готов к выдаче
+              </button>
+            ` : ''}
+
+            <button class="btn btn--sm btn--success" onclick="Admin.completeOrder('${order.id}')">
+              Продать
+            </button>
+
+            <button class="btn btn--sm btn--danger" onclick="Admin.cancelOrder('${order.id}')">
+              Отменить
+            </button>
+          </div>
+        </div>
+      `;
+    }).join('');
+  },
+
+  async updateOrderStatus(orderId, newStatus) {
+    try {
+      await firebase.firestore().collection('orders').doc(orderId).update({
+        status: newStatus,
+        updatedAt: firebase.firestore.FieldValue.serverTimestamp()
+      });
+
+      UI.showToast('Статус обновлен', 'success');
+      await this.loadOrders();
+    } catch (err) {
+      console.error('updateOrderStatus error:', err);
+      UI.showToast('Ошибка', 'error');
+    }
+  },
+
+  async completeOrder(orderId) {
+    const order = this.ordersData.find(o => o.id === orderId);
+    if (!order) return;
+
+    const confirmed = await UI.confirm('Подтверждение продажи', 'Подтвердить продажу и распечатать чек?');
+    if (!confirmed) return;
+
+    try {
+      const db = firebase.firestore();
+      const batch = db.batch();
+
+      batch.update(db.collection('orders').doc(orderId), {
+        status: 'completed',
+        completedAt: firebase.firestore.FieldValue.serverTimestamp(),
+        updatedAt: firebase.firestore.FieldValue.serverTimestamp()
+      });
+
+      const saleRef = db.collection('sales').doc();
+      batch.set(saleRef, {
+        ...order,
+        orderId,
+        status: 'completed',
+        completedAt: firebase.firestore.FieldValue.serverTimestamp()
+      });
+
+      await batch.commit();
+
+      // Автопечать чека 80mm (через UI.printReceipt)
+      const items = (order.items || []).map(x => ({ partName: x.partName, price: x.price || 0 }));
+      const total = items.reduce((s, x) => s + (x.price || 0), 0);
+
+      UI.printReceipt({
+        title: 'Чек продажи',
+        orderNumber: order.orderNumber || order.id.slice(-8),
+        userName: order.userName || order.userEmail || '—',
+        items,
+        total,
+        date: Utils.formatDate(new Date(), true)
+      });
+
+      UI.showToast('Продажа оформлена', 'success');
+
+      await this.loadOrders();
+      await this.loadSales();
+    } catch (err) {
+      console.error('completeOrder error:', err);
+      UI.showToast('Ошибка при продаже', 'error');
+    }
+  },
+
+  async cancelOrder(orderId) {
+    const order = this.ordersData.find(o => o.id === orderId);
+    if (!order) return;
+
+    const confirmed = await UI.confirm(
+      'Отмена бронирования',
+      'Отменить бронирование? Товары вернутся на склад.'
+    );
+    if (!confirmed) return;
+
+    try {
+      const db = firebase.firestore();
+      const batch = db.batch();
+
+      batch.update(db.collection('orders').doc(orderId), {
+        status: 'cancelled',
+        cancelledAt: firebase.firestore.FieldValue.serverTimestamp(),
+        updatedAt: firebase.firestore.FieldValue.serverTimestamp()
+      });
+
+      // возвращаем stock
+      for (const item of (order.items || [])) {
+        if (item.productId) {
+          batch.update(db.collection('inventory').doc(item.productId), {
+            stock: firebase.firestore.FieldValue.increment(1)
+          });
+        }
+      }
+
+      await batch.commit();
+
+      UI.showToast('Бронирование отменено', 'success');
+      await this.loadOrders();
+      await this.loadInventory();
+    } catch (err) {
+      console.error('cancelOrder error:', err);
+      UI.showToast('Ошибка', 'error');
+    }
+  },
+
+  // =====================================================
+  // SALES
+  // =====================================================
+  async loadSales() {
+    try {
+      const snapshot = await firebase.firestore().collection('sales').get();
+      this.salesData = snapshot.docs.map(doc => ({ id: doc.id, ...doc.data() }));
+      this.salesData.sort((a, b) => (b.completedAt?.toMillis?.() || 0) - (a.completedAt?.toMillis?.() || 0));
+      this.renderSales();
+    } catch (err) {
+      console.error('loadSales error:', err);
+      UI.showToast('Не удалось загрузить продажи', 'error');
+    }
+  },
+
+  renderSales() {
+    const container = document.getElementById('salesList');
+    if (!container) return;
+
+    if (!this.salesData.length) {
+      container.innerHTML = `<div class="empty-state"><p>Нет завершенных продаж</p></div>`;
+      return;
+    }
+
+    container.innerHTML = this.salesData.map(sale => {
+      const items = sale.items || [];
+      const total = items.reduce((sum, item) => sum + (item.price || 0), 0);
+      const orderNo = sale.orderNumber || sale.orderId?.slice(-8) || sale.id.slice(-8);
+
+      return `
+        <div class="order-card" data-sale-id="${sale.id}">
+          <div class="order-card__header">
+            <div>
+              <span class="order-card__id">Заказ #${Utils.escapeHtml(orderNo)}</span>
+              <span class="order-card__date">${Utils.formatDate(sale.completedAt, true)}</span>
+            </div>
+            <span class="order-card__status order-card__status--completed">Завершён</span>
+          </div>
+
+          <div class="order-card__user">
+            <strong>Клиент:</strong> ${Utils.escapeHtml(sale.userName || sale.userEmail || 'Неизвестно')}
+          </div>
+
+          <div class="order-card__items">
+            ${items.map(item => `
+              <div class="order-item">
+                <span>${Utils.escapeHtml(item.partName)}</span>
+                <span>${Utils.formatPrice(item.price || 0)}</span>
+              </div>
+            `).join('')}
+          </div>
+
+          <div class="order-card__total">
+            <span>Итого:</span>
+            <span>${Utils.formatPrice(total)}</span>
+          </div>
+
+          <div class="order-card__actions">
+            <button class="btn btn--sm btn--secondary" onclick="Admin.printSaleReceipt('${sale.id}')">
+              Печать чека
+            </button>
+          </div>
+        </div>
+      `;
+    }).join('');
+  },
+
+  printSaleReceipt(saleId) {
+    const sale = this.salesData.find(s => s.id === saleId);
+    if (!sale) {
+      UI.showToast('Продажа не найдена', 'error');
+      return;
+    }
+
+    const items = (sale.items || []).map(x => ({ partName: x.partName, price: x.price || 0 }));
+    const total = items.reduce((s, x) => s + (x.price || 0), 0);
+
+    UI.printReceipt({
+      title: 'Чек продажи',
+      orderNumber: sale.orderNumber || sale.orderId?.slice(-8) || sale.id.slice(-8),
+      userName: sale.userName || sale.userEmail || '—',
+      items,
+      total,
+      date: Utils.formatDate(sale.completedAt || new Date(), true)
+    });
+  },
+
+  // =====================================================
+  // CARS TAB (красиво)
+  // =====================================================
+  buildCarsFromInventory() {
+    const map = new Map();
+
+    for (const item of this.inventoryData) {
+      const carKey = item.carKey || this.createCarKey(item);
+
+      if (!map.has(carKey)) {
+        map.set(carKey, {
+          carKey,
+          carMake: item.carMake,
+          carModel: item.carModel,
+          year: item.year,
+          bodyType: item.bodyType,
+          restyling: !!item.restyling,
+          updatedAt: item.updatedAt || item.createdAt || null,
+          parts: []
+        });
+      }
+
+      const car = map.get(carKey);
+
+      const itemTs = this.getTsMillis(item);
+      const carTs = car.updatedAt?.toMillis?.() ? car.updatedAt.toMillis() : 0;
+      if (itemTs > carTs) car.updatedAt = item.updatedAt || item.createdAt;
+
+      if ((item.stock || 0) > 0) {
+        car.parts.push({
+          partName: item.partName,
+          condition: item.condition,
+          stock: item.stock,
+          price: item.price
+        });
+      }
+    }
+
+    for (const car of map.values()) {
+      car.parts.sort((a, b) => (a.partName || '').localeCompare(b.partName || ''));
+    }
+
+    return Array.from(map.values());
+  },
+
+  refreshCarsTab() {
+    const search = (document.getElementById('carsSearch')?.value || '').toLowerCase().trim();
+    const sort = document.getElementById('carsSort')?.value || 'updated_desc';
+
+    let cars = this.buildCarsFromInventory();
+
+    if (search) {
+      cars = cars.filter(c => {
+        const s = `${c.carMake} ${c.carModel} ${c.year} ${c.bodyType} ${c.restyling ? 'restyling' : ''}`.toLowerCase();
+        return s.includes(search);
+      });
+    }
+
+    if (sort === 'name_asc') {
+      cars.sort((a, b) => `${a.carMake} ${a.carModel}`.localeCompare(`${b.carMake} ${b.carModel}`));
+    } else if (sort === 'parts_desc') {
+      cars.sort((a, b) => (b.parts.length - a.parts.length));
+    } else {
+      cars.sort((a, b) => (b.updatedAt?.toMillis?.() || 0) - (a.updatedAt?.toMillis?.() || 0));
+    }
+
+    this.renderCars(cars);
+  },
+
+  renderCars(cars) {
+    const el = document.getElementById('carsList');
+    if (!el) return;
+
+    if (!cars.length) {
+      el.innerHTML = `<div class="empty-state"><p>Нет добавленных авто</p></div>`;
+      return;
+    }
+
+    el.innerHTML = cars.map(car => {
+      const title = `${car.carMake} ${car.carModel} (${car.year})`;
+      const meta = `${Utils.getBodyTypeName(car.bodyType)}${car.restyling ? ' • рестайлинг' : ''}`;
+
+      const totalStock = car.parts.reduce((s, p) => s + (p.stock || 0), 0);
+      const partsCount = car.parts.length;
+      const updated = car.updatedAt ? Utils.formatDate(car.updatedAt, true) : '—';
+
+      const partsHtml = partsCount
+        ? `
+          <div class="car-parts-grid">
+            ${car.parts.map(p => `
+              <div class="car-part">
+                <div>
+                  <div class="car-part__name">${Utils.escapeHtml(p.partName)}</div>
+                  <div class="car-part__sub">${p.condition === 'new' ? 'Новое' : 'Б/У'} • Остаток: ${p.stock}</div>
+                </div>
+                <div class="car-part__chips">
+                  <span class="chip ${p.condition === 'new' ? 'chip--ok' : 'chip--warn'}">${p.condition === 'new' ? 'NEW' : 'USED'}</span>
+                  <span class="chip chip--accent">${Utils.formatPrice(p.price || 0)}</span>
+                  <span class="chip">x${p.stock || 0}</span>
+                </div>
+              </div>
+            `).join('')}
+          </div>
+        `
+        : `<div class="muted">Нет запчастей в наличии</div>`;
+
+      return `
+        <details class="car-card">
+          <summary>
+            <div class="car-card__summary">
+              <div class="car-card__left">
+                <div class="car-card__title">${Utils.escapeHtml(title)}</div>
+                <div class="car-card__meta">${Utils.escapeHtml(meta)}</div>
+                <div class="muted" style="font-size:12px;margin-top:4px;">Обновление склада: ${Utils.escapeHtml(updated)}</div>
+              </div>
+
+              <div class="car-card__right">
+                <span class="chip">Позиций: ${partsCount}</span>
+                <span class="chip">Всего шт.: ${totalStock}</span>
+                <span class="car-card__toggle">⌄</span>
+              </div>
+            </div>
+          </summary>
+
+          <div class="car-card__body">
+            ${partsHtml}
+          </div>
+        </details>
+      `;
+    }).join('');
+  }
 };
+
+window.Admin = Admin;
