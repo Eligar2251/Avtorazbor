@@ -206,114 +206,137 @@ const Reservations = {
   },
 
   async commitCheckout() {
-    if (this._checkoutInProgress) return;
-    this._checkoutInProgress = true;
+  if (this._checkoutInProgress) return;
+  this._checkoutInProgress = true;
 
-    const btn = document.getElementById('confirmCheckoutBtn');
-    const oldText = btn?.textContent || 'Подтвердить бронь';
+  const btn = document.getElementById('confirmCheckoutBtn');
+  const oldText = btn?.textContent || 'Подтвердить бронь';
 
-    try {
-      if (!Auth.isAuthenticated()) {
-        UI.openModal('authModal');
-        return;
-      }
-
-      if (!this.cart.length) {
-        UI.showToast('Корзина пуста', 'warning');
-        UI.closeModal('checkoutModal');
-        return;
-      }
-
-      btn && (btn.disabled = true);
-      btn && (btn.textContent = 'Оформляем...');
-
-      const user = Auth.getUser();
-      const userData = Auth.getUserData();
-      const userName = userData?.name || (user?.email ? user.email.split('@')[0] : '—');
-
-      const db = firebase.firestore();
-      const orderRef = db.collection('orders').doc();
-      const orderNumber = Utils.generateOrderNumber();
-
-      const itemsSnapshot = this.cart.map(i => ({
-        productId: i.productId,
-        partName: i.partName,
-        carMake: i.carMake,
-        carModel: i.carModel,
-        year: i.year,
-        bodyType: i.bodyType,
-        restyling: !!i.restyling,
-        condition: i.condition,
-        price: i.price
-      }));
-
-      const total = itemsSnapshot.reduce((s, x) => s + (x.price || 0), 0);
-
-      // транзакция без индексов
-      await db.runTransaction(async (tx) => {
-        for (const item of itemsSnapshot) {
-          const ref = db.collection('inventory').doc(item.productId);
-          const snap = await tx.get(ref);
-
-          if (!snap.exists) throw new Error(`Товар не найден: ${item.partName}`);
-
-          const stock = snap.data().stock || 0;
-          if (stock <= 0) throw new Error(`Товар закончился: ${item.partName}`);
-
-          tx.update(ref, { stock: stock - 1 });
-        }
-
-        tx.set(orderRef, {
-          orderNumber,
-          userId: user.uid,
-          userEmail: user.email,
-          userName,
-          items: itemsSnapshot,
-          status: 'active',
-          date: firebase.firestore.FieldValue.serverTimestamp(),
-          createdAt: firebase.firestore.FieldValue.serverTimestamp()
-        });
-      });
-
-      // успех
-      this.clearCart();
-      UI.closeModal('checkoutModal');
-
-      UI.renderBookingResult({
-        orderNumber,
-        userName,
-        items: itemsSnapshot.map(x => ({ partName: x.partName, price: x.price })),
-        total
-      });
-      UI.openModal('bookingResultModal');
-
-      // печать 80mm
-      UI.printReceipt({
-        title: 'Чек бронирования',
-        orderNumber,
-        userName,
-        items: itemsSnapshot.map(x => ({ partName: x.partName, price: x.price })),
-        total,
-        date: Utils.formatDate(new Date(), true)
-      });
-
-      UI.showToast(`Бронь оформлена: #${orderNumber}`, 'success');
-
-      if (!document.getElementById('profileSection')?.classList.contains('hidden')) {
-        this.loadUserOrders();
-      }
-
-    } catch (e) {
-      console.error('commitCheckout error:', e);
-      UI.showToast(e?.message || 'Ошибка при оформлении брони', 'error');
-      await this.validateCart();
-      this.renderCartItems();
-    } finally {
-      btn && (btn.disabled = false);
-      btn && (btn.textContent = oldText);
-      this._checkoutInProgress = false;
+  try {
+    if (!Auth.isAuthenticated()) {
+      UI.openModal('authModal');
+      return;
     }
-  },
+
+    if (!this.cart.length) {
+      UI.showToast('Корзина пуста', 'warning');
+      UI.closeModal('checkoutModal');
+      return;
+    }
+
+    btn && (btn.disabled = true);
+    btn && (btn.textContent = 'Оформляем...');
+
+    const user = Auth.getUser();
+    const userData = Auth.getUserData();
+    const userName = userData?.name || (user?.email ? user.email.split('@')[0] : '—');
+
+    const db = firebase.firestore();
+    const orderRef = db.collection('orders').doc();
+    const orderNumber = Utils.generateOrderNumber();
+
+    const itemsSnapshot = this.cart.map(i => ({
+      productId: i.productId,
+      partName: i.partName,
+      carMake: i.carMake,
+      carModel: i.carModel,
+      year: i.year,
+      bodyType: i.bodyType,
+      restyling: !!i.restyling,
+      condition: i.condition,
+      price: i.price
+    }));
+
+    const total = itemsSnapshot.reduce((s, x) => s + (x.price || 0), 0);
+
+      // ✅ ИСПРАВЛЕННАЯ ТРАНЗАКЦИЯ
+    await db.runTransaction(async (tx) => {
+      // ───────────────────────────────────────────
+      // ШАГ 1: Сначала ВСЕ чтения
+      // ───────────────────────────────────────────
+      const reads = [];
+      
+      for (const item of itemsSnapshot) {
+        const ref = db.collection('inventory').doc(item.productId);
+        const snap = await tx.get(ref);
+        reads.push({ item, ref, snap });
+      }
+
+      // ───────────────────────────────────────────
+      // ШАГ 2: Валидация данных (без обращения к БД)
+      // ───────────────────────────────────────────
+      for (const { item, snap } of reads) {
+        if (!snap.exists) {
+          throw new Error(`Товар не найден: ${item.partName}`);
+        }
+        const stock = snap.data().stock || 0;
+        if (stock <= 0) {
+          throw new Error(`Товар закончился: ${item.partName}`);
+        }
+      }
+
+      // ───────────────────────────────────────────
+      // ШАГ 3: Потом ВСЕ записи
+      // ───────────────────────────────────────────
+      for (const { ref, snap } of reads) {
+        const currentStock = snap.data().stock || 0;
+        tx.update(ref, { stock: currentStock - 1 });
+      }
+
+      // Создаём заказ
+      tx.set(orderRef, {
+        orderNumber,
+        userId: user.uid,
+        userEmail: user.email,
+        userName,
+        items: itemsSnapshot,
+        total,
+        status: 'active',
+        date: firebase.firestore.FieldValue.serverTimestamp(),
+        createdAt: firebase.firestore.FieldValue.serverTimestamp()
+      });
+    });
+
+    // ✅ Успех
+    this.clearCart();
+    UI.closeModal('checkoutModal');
+
+    UI.renderBookingResult({
+      orderNumber,
+      userName,
+      items: itemsSnapshot.map(x => ({ partName: x.partName, price: x.price })),
+      total
+    });
+    UI.openModal('bookingResultModal');
+
+    // Печать чека
+    UI.printReceipt({
+      title: 'Чек бронирования',
+      orderNumber,
+      userName,
+      items: itemsSnapshot.map(x => ({ partName: x.partName, price: x.price })),
+      total,
+      date: Utils.formatDate(new Date(), true)
+    });
+
+    UI.showToast(`Бронь оформлена: #${orderNumber}`, 'success');
+
+    // Обновляем список заказов если открыт профиль
+    if (!document.getElementById('profileSection')?.classList.contains('hidden')) {
+      this.loadUserOrders();
+    }
+
+  } catch (e) {
+    console.error('commitCheckout error:', e);
+    UI.showToast(e?.message || 'Ошибка при оформлении брони', 'error');
+    await this.validateCart();
+    this.renderCartItems();
+  } finally {
+    btn && (btn.disabled = false);
+    btn && (btn.textContent = oldText);
+    this._checkoutInProgress = false;
+  }
+},
 
   // -------------------------------
   // FIX: без orderBy -> без индекса
