@@ -19,7 +19,7 @@ const Config = {
     // Cloudinary Configuration
     // ВАЖНО: Замените на свои данные из Cloudinary Dashboard
     cloudinary: {
-        cloudName: "your-cloud-name",
+        cloudName: "dewtwmiup",
         uploadPreset: "autoparts_unsigned", // Создайте unsigned upload preset в настройках Cloudinary
         folder: "autoparts"
     },
