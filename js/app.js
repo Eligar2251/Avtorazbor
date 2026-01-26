@@ -55,7 +55,7 @@ const App = {
 
   initFirebase() {
     if (!firebase.apps.length) {
-      firebase.initializeApp(config.firebase);
+      firebase.initializeApp(Config.firebase);
       console.log('Firebase инициализирован');
     }
   },
@@ -222,7 +222,7 @@ const App = {
     this.sortProducts(filtered);
 
     this.catalog.filteredProducts = filtered;
-    this.catalog.totalPages = Math.max(1, Math.ceil(filtered.length / config.itemsPerPage));
+    this.catalog.totalPages = Math.max(1, Math.ceil(filtered.length / Config.itemsPerPage));
     this.catalog.currentPage = 1;
 
     this.renderPage();
@@ -250,8 +250,8 @@ const App = {
   },
 
   renderPage() {
-    const start = (this.catalog.currentPage - 1) * config.itemsPerPage;
-    const end = start + config.itemsPerPage;
+    const start = (this.catalog.currentPage - 1) * Config.itemsPerPage;
+    const end = start + Config.itemsPerPage;
     const pageProducts = this.catalog.filteredProducts.slice(start, end);
 
     UI.renderProducts(pageProducts);
