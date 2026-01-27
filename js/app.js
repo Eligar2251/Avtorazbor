@@ -213,6 +213,7 @@ const App = {
       const q = f.search.toLowerCase();
       filtered = filtered.filter(p =>
         (p.partName || '').toLowerCase().includes(q) ||
+        (p.customTitle || '').toLowerCase().includes(q) || // ✅ добавили кастомный заголовок в поиск
         (p.carMake || '').toLowerCase().includes(q) ||
         (p.carModel || '').toLowerCase().includes(q) ||
         (p.description || '').toLowerCase().includes(q)
@@ -231,14 +232,17 @@ const App = {
   sortProducts(products) {
     switch (this.catalog.sort) {
       case 'price_asc':
-        products.sort((a, b) => (a.price || 0) - (b.price || 0));
+        products.sort((a, b) => Utils.getPriceFinal(a) - Utils.getPriceFinal(b));
         break;
+
       case 'price_desc':
-        products.sort((a, b) => (b.price || 0) - (a.price || 0));
+        products.sort((a, b) => Utils.getPriceFinal(b) - Utils.getPriceFinal(a));
         break;
+
       case 'name_asc':
         products.sort((a, b) => (a.partName || '').localeCompare(b.partName || ''));
         break;
+
       case 'newest':
       default:
         products.sort((a, b) => {

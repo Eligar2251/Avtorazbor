@@ -224,6 +224,12 @@ const Admin = {
       const draft = this.bulkDrafts.get(id) || {};
 
       if (el.classList.contains('bulk-price')) draft.price = parseInt(el.value, 10) || 0;
+
+      if (el.classList.contains('bulk-discount')) {
+        const v = parseInt(el.value, 10);
+        draft.discountPercent = Number.isFinite(v) ? Math.min(100, Math.max(0, v)) : 0;
+      }
+
       if (el.classList.contains('bulk-stock')) draft.stock = parseInt(el.value, 10) || 0;
       if (el.classList.contains('bulk-desc')) draft.description = el.value || '';
 
@@ -346,11 +352,15 @@ const Admin = {
   // Helpers
   // ==========================================================
   createCarKey(car) {
-    const make = car?.carMake || '';
-    const model = car?.carModel || '';
-    const year = car?.year || '';
-    const body = car?.bodyType || '';
+    const make = String(car?.carMake || '').trim();
+    const model = String(car?.carModel || '').trim();
+
+    // ✅ null/undefined => пусто, чтобы не было "null" в ключе
+    const year = (car?.year == null || car?.year === '') ? '' : String(car.year).trim();
+
+    const body = String(car?.bodyType || '').trim();
     const rest = car?.restyling ? '1' : '0';
+
     return [make, model, year, body, rest].join('|').toLowerCase();
   },
 
@@ -360,6 +370,74 @@ const Admin = {
     if (typeof ts.toMillis === 'function') return ts.toMillis();
     if (ts instanceof Date) return ts.getTime();
     return 0;
+  },
+
+  // ==========================================================
+  // FIX: Suggested price (wizard)
+  // ==========================================================
+  findSuggestedPrice(partName, condition = 'used') {
+    const car = this.wizardState?.carData || {};
+
+    // 1) Try the most accurate way: inventoryKey
+    let key = '';
+    try {
+      key = Utils.createInventoryKey({
+        partName,
+        condition,
+        carMake: car.carMake,
+        carModel: car.carModel,
+        year: car.year,
+        bodyType: car.bodyType,
+        restyling: !!car.restyling
+      });
+    } catch (e) {
+      key = '';
+    }
+
+    const norm = (s) => String(s || '').trim().toLowerCase();
+
+    const sameExact = this.inventoryData.filter(i => {
+      const price = Number(i.price || 0);
+      if (!(price > 0)) return false;
+
+      // new docs: inventoryKey match
+      if (key && i.inventoryKey && i.inventoryKey === key) return true;
+
+      // legacy fallback for old docs without inventoryKey
+      return (
+        norm(i.partName) === norm(partName) &&
+        (i.condition || 'used') === condition &&
+        norm(i.carMake) === norm(car.carMake) &&
+        norm(i.carModel) === norm(car.carModel) &&
+        Number(i.year || 0) === Number(car.year || 0) &&
+        norm(i.bodyType) === norm(car.bodyType) &&
+        !!i.restyling === !!car.restyling
+      );
+    });
+
+    // 2) If not found for this car — fallback to any car (same part+condition)
+    const fallbackAnyCar = this.inventoryData.filter(i => {
+      const price = Number(i.price || 0);
+      if (!(price > 0)) return false;
+      return norm(i.partName) === norm(partName) && (i.condition || 'used') === condition;
+    });
+
+    const candidates = (sameExact.length ? sameExact : fallbackAnyCar)
+      .map(x => Number(x.price || 0))
+      .filter(p => Number.isFinite(p) && p > 0)
+      .sort((a, b) => a - b);
+
+    if (!candidates.length) return null;
+
+    // 3) Median is more stable than average
+    const mid = Math.floor(candidates.length / 2);
+    const median = (candidates.length % 2)
+      ? candidates[mid]
+      : Math.round((candidates[mid - 1] + candidates[mid]) / 2);
+
+    // 4) Round to "nice" step
+    const step = 50;
+    return Math.max(0, Math.round(median / step) * step);
   },
 
   // ==========================================================
@@ -432,6 +510,7 @@ const Admin = {
 
       this.bulkDrafts.set(id, {
         price: item.price || 0,
+        discountPercent: item.discountPercent ?? 0, // ✅
         stock: item.stock || 0,
         description: item.description || '',
         imageUrl: item.imageUrl || ''
@@ -454,6 +533,7 @@ const Admin = {
             </div>
           </td>
           <td><input class="form-input bulk-price" data-id="${id}" type="number" min="0" value="${item.price || 0}"></td>
+          <td><input class="form-input bulk-discount" data-id="${id}" type="number" min="0" max="100" value="${item.discountPercent ?? 0}"></td>
           <td><input class="form-input bulk-stock" data-id="${id}" type="number" min="0" value="${item.stock || 0}"></td>
           <td><textarea class="form-textarea bulk-desc" data-id="${id}" rows="2">${Utils.escapeHtml(item.description || '')}</textarea></td>
         </tr>
@@ -481,8 +561,12 @@ const Admin = {
         const draft = this.bulkDrafts.get(id);
         if (!draft) continue;
 
+        const discountRaw = parseInt(draft.discountPercent, 10);
+        const discountPercent = Number.isFinite(discountRaw) ? Math.min(100, Math.max(0, discountRaw)) : 0;
+
         batch.update(db.collection('inventory').doc(id), {
           price: parseInt(draft.price, 10) || 0,
+          discountPercent, // ✅
           stock: parseInt(draft.stock, 10) || 0,
           description: String(draft.description || ''),
           imageUrl: String(draft.imageUrl || ''),
@@ -555,8 +639,17 @@ const Admin = {
       const imageUrl = item.imageUrl || 'data:image/svg+xml,%3Csvg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="%236c6c80"%3E%3Cpath d="M21 19V5c0-1.1-.9-2-2-2H5c-1.1 0-2 .9-2 2v14c0 1.1.9 2 2 2h14c1.1 0 2-.9 2-2zM8.5 13.5l2.5 3.01L14.5 12l4.5 6H5l3.5-4.5z"/%3E%3C/svg%3E';
       const conditionText = item.condition === 'new' ? 'Новое' : 'Б/У';
       const stock = item.stock || 0;
-      const stockStyle = stock <= 2 ? 'style="color: var(--color-warning)"' : '';
+
+      const stockStyle = stock <= 2 ? 'style="color: var(--warn)"' : '';
       const checked = this.selectedInventoryIds.has(item.id) ? 'checked' : '';
+
+      const priceOriginal = Utils.getPriceOriginal(item);
+      const disc = Utils.getDiscountPercent(item);
+      const priceFinal = Utils.getPriceFinal({ priceOriginal, discountPercent: disc });
+
+      const priceHtml = (disc > 0 && priceFinal < priceOriginal)
+        ? `<span class="price-old">${Utils.formatPrice(priceOriginal)}</span> <span class="price-new">${Utils.formatPrice(priceFinal)}</span><div class="muted" style="font-size:12px;">-${disc}%</div>`
+        : `<span class="price-new">${Utils.formatPrice(priceOriginal)}</span>`;
 
       return `
         <tr data-id="${item.id}">
@@ -567,7 +660,7 @@ const Admin = {
           <td>${Utils.escapeHtml(item.partName || '')}</td>
           <td>${Utils.escapeHtml(Utils.formatCarName(item))}</td>
           <td>${conditionText}</td>
-          <td>${Utils.formatPrice(item.price || 0)}</td>
+          <td>${priceHtml}</td>
           <td ${stockStyle}>${stock}</td>
           <td class="inventory-table__actions">
             <button class="btn btn--sm btn--secondary inv-edit" type="button" data-id="${item.id}">✎</button>
@@ -578,6 +671,21 @@ const Admin = {
 
     this.syncSelectAllCheckbox();
     this.updateBulkBar();
+  },
+
+  async copyPhone(phone) {
+    const p = String(phone || '').trim();
+    if (!p) return;
+
+    try {
+      await navigator.clipboard.writeText(p);
+      UI.showToast('Телефон скопирован', 'success');
+    } catch (e) {
+      // fallback
+      try {
+        window.prompt('Скопируйте телефон:', p);
+      } catch (_) { }
+    }
   },
 
   filterInventory(query) {
@@ -612,6 +720,8 @@ const Admin = {
     this._editImageUrl = null;
 
     document.getElementById('editProductId').value = product.id;
+    document.getElementById('editCustomTitle').value = product.customTitle || '';
+    document.getElementById('editDiscountPercent').value = product.discountPercent ?? 0; // ✅
     document.getElementById('editPrice').value = product.price ?? 0;
     document.getElementById('editStock').value = product.stock ?? 0;
     document.getElementById('editDescription').value = product.description || '';
@@ -637,11 +747,19 @@ const Admin = {
     e.preventDefault();
 
     const productId = document.getElementById('editProductId').value;
+
+    const customTitle = (document.getElementById('editCustomTitle')?.value || '').trim();
+
+    const discountRaw = parseInt(document.getElementById('editDiscountPercent')?.value, 10);
+    const discountPercent = Number.isFinite(discountRaw) ? Math.min(100, Math.max(0, discountRaw)) : 0;
+
     const price = parseInt(document.getElementById('editPrice').value, 10);
     const stock = parseInt(document.getElementById('editStock').value, 10);
     const description = (document.getElementById('editDescription').value || '').trim();
 
     const patch = {
+      customTitle,
+      discountPercent, // ✅
       price: Number.isFinite(price) ? price : 0,
       stock: Number.isFinite(stock) ? stock : 0,
       description,
@@ -695,48 +813,68 @@ const Admin = {
 
     container.innerHTML = this.ordersData.map(order => {
       const statusInfo = Config.orderStatuses?.[order.status] || { label: order.status, class: 'active' };
-      const total = (order.items || []).reduce((s, i) => s + (i.price || 0), 0);
+      const total = (order.items || []).reduce((s, i) => s + (i.priceFinal ?? i.price ?? 0), 0);
 
-      return `
-        <div class="order-card" data-order-id="${order.id}">
-          <div class="order-card__header">
-            <div>
-              <span class="order-card__id">Заказ #${Utils.escapeHtml(order.orderNumber || order.id.slice(-8))}</span>
-              <span class="order-card__date">${Utils.formatDate(order.date || order.createdAt || null, true)}</span>
-            </div>
-            <span class="order-card__status order-card__status--${statusInfo.class}">${statusInfo.label}</span>
-          </div>
+      const phone = order.userPhone ? String(order.userPhone) : '';
 
-          <div class="order-card__user">
-            <strong>Клиент:</strong> ${Utils.escapeHtml(order.userName || order.userEmail || 'Неизвестно')}
-          </div>
-
-          <div class="order-card__items">
-            ${(order.items || []).map(item => `
-              <div class="order-item">
-                <span>${Utils.escapeHtml(item.partName)}</span>
-                <span>${Utils.formatPrice(item.price || 0)}</span>
-              </div>
-            `).join('')}
-          </div>
-
-          <div class="order-card__total">
-            <span>Итого:</span>
-            <span>${Utils.formatPrice(total)}</span>
-          </div>
-
-          <div class="order-card__actions">
-            ${order.status === 'active' ? `
-              <button class="btn btn--sm btn--secondary" type="button" onclick="Admin.updateOrderStatus('${order.id}','ready')">
-                Готов к выдаче
-              </button>
-            ` : ''}
-
-            <button class="btn btn--sm btn--success" type="button" onclick="Admin.completeOrder('${order.id}')">Продать</button>
-            <button class="btn btn--sm btn--danger" type="button" onclick="Admin.cancelOrder('${order.id}')">Отменить</button>
-          </div>
+      const phoneHtml = phone
+        ? `
+        <div class="order-card__user" style="display:flex;gap:10px;align-items:center;flex-wrap:wrap;">
+          <strong>Телефон:</strong>
+          <a href="tel:${Utils.escapeHtml(phone)}">${Utils.escapeHtml(phone)}</a>
+          <button class="btn btn--sm btn--secondary" type="button" onclick="Admin.copyPhone('${Utils.escapeHtml(phone)}')">
+            Копировать
+          </button>
+        </div>
+      `
+        : `
+        <div class="order-card__user">
+          <strong>Телефон:</strong> <span class="muted">—</span>
         </div>
       `;
+
+      return `
+      <div class="order-card" data-order-id="${order.id}">
+        <div class="order-card__header">
+          <div>
+            <span class="order-card__id">Заказ #${Utils.escapeHtml(order.orderNumber || order.id.slice(-8))}</span>
+            <span class="order-card__date">${Utils.formatDate(order.date || order.createdAt || null, true)}</span>
+          </div>
+          <span class="order-card__status order-card__status--${statusInfo.class}">${statusInfo.label}</span>
+        </div>
+
+        <div class="order-card__user">
+          <strong>Клиент:</strong> ${Utils.escapeHtml(order.userName || order.userEmail || 'Неизвестно')}
+        </div>
+
+        ${phoneHtml}
+
+        <div class="order-card__items">
+          ${(order.items || []).map(item => `
+            <div class="order-item">
+              <span>${Utils.escapeHtml(item.title || item.customTitle || item.partName)}</span>
+              <span>${Utils.formatPrice(item.priceFinal ?? item.price ?? 0)}</span>
+            </div>
+          `).join('')}
+        </div>
+
+        <div class="order-card__total">
+          <span>Итого:</span>
+          <span>${Utils.formatPrice(total)}</span>
+        </div>
+
+        <div class="order-card__actions">
+          ${order.status === 'active' ? `
+            <button class="btn btn--sm btn--secondary" type="button" onclick="Admin.updateOrderStatus('${order.id}','ready')">
+              Готов к выдаче
+            </button>
+          ` : ''}
+
+          <button class="btn btn--sm btn--success" type="button" onclick="Admin.completeOrder('${order.id}')">Продать</button>
+          <button class="btn btn--sm btn--danger" type="button" onclick="Admin.cancelOrder('${order.id}')">Отменить</button>
+        </div>
+      </div>
+    `;
     }).join('');
   },
 
@@ -780,8 +918,10 @@ const Admin = {
 
       await batch.commit();
 
-      // print receipt if available
-      const items = (order.items || []).map(x => ({ partName: x.partName, price: x.price || 0 }));
+      const items = (order.items || []).map(x => ({
+        partName: x.title || x.customTitle || x.partName,
+        price: x.priceFinal ?? x.price ?? 0
+      }));
       const total = items.reduce((s, x) => s + (x.price || 0), 0);
 
       if (typeof UI.printReceipt === 'function') {
@@ -789,9 +929,21 @@ const Admin = {
           title: 'Чек продажи',
           orderNumber: order.orderNumber || orderId.slice(-8),
           userName: order.userName || order.userEmail || '—',
-          items,
-          total,
-          date: Utils.formatDate(new Date(), true)
+          userPhone: order.userPhone || '', // ✅
+
+          items: (order.items || []).map(x => ({
+            partName: x.title || x.customTitle || x.partName,
+            qty: 1,
+            priceFinal: x.priceFinal ?? x.price ?? 0,
+            priceOriginal: x.priceOriginal ?? x.priceFinal ?? x.price ?? 0,
+            discountPercent: x.discountPercent ?? 0
+          })),
+
+          total: (order.items || []).reduce((s, x) => s + (x.priceFinal ?? x.price ?? 0), 0),
+          date: Utils.formatDate(new Date(), true),
+
+          companyName: 'AutoParts',
+          footerNote: 'Спасибо за покупку!'
         });
       }
 
@@ -849,7 +1001,7 @@ const Admin = {
 
     container.innerHTML = this.salesData.map(sale => {
       const items = sale.items || [];
-      const total = items.reduce((s, i) => s + (i.price || 0), 0);
+      const total = items.reduce((s, i) => s + (i.priceFinal ?? i.price ?? 0), 0);
       const orderNo = sale.orderNumber || sale.orderId?.slice(-8) || sale.id.slice(-8);
 
       return `
@@ -869,8 +1021,8 @@ const Admin = {
           <div class="order-card__items">
             ${items.map(item => `
               <div class="order-item">
-                <span>${Utils.escapeHtml(item.partName)}</span>
-                <span>${Utils.formatPrice(item.price || 0)}</span>
+                <span>${Utils.escapeHtml(item.title || item.customTitle || item.partName)}</span>
+                <span>${Utils.formatPrice(item.priceFinal ?? item.price ?? 0)}</span>
               </div>
             `).join('')}
           </div>
@@ -892,7 +1044,10 @@ const Admin = {
     const sale = this.salesData.find(s => s.id === saleId);
     if (!sale) return UI.showToast('Продажа не найдена', 'error');
 
-    const items = (sale.items || []).map(x => ({ partName: x.partName, price: x.price || 0 }));
+    const items = (sale.items || []).map(x => ({
+      partName: x.title || x.customTitle || x.partName,
+      price: x.priceFinal ?? x.price ?? 0
+    }));
     const total = items.reduce((s, x) => s + (x.price || 0), 0);
 
     if (typeof UI.printReceipt === 'function') {
@@ -900,9 +1055,21 @@ const Admin = {
         title: 'Чек продажи',
         orderNumber: sale.orderNumber || sale.orderId?.slice(-8) || sale.id.slice(-8),
         userName: sale.userName || sale.userEmail || '—',
-        items,
-        total,
-        date: Utils.formatDate(sale.completedAt || new Date(), true)
+        userPhone: sale.userPhone || '',
+
+        items: (sale.items || []).map(x => ({
+          partName: x.title || x.customTitle || x.partName,
+          qty: 1,
+          priceFinal: x.priceFinal ?? x.price ?? 0,
+          priceOriginal: x.priceOriginal ?? x.priceFinal ?? x.price ?? 0,
+          discountPercent: x.discountPercent ?? 0
+        })),
+
+        total: (sale.items || []).reduce((s, x) => s + (x.priceFinal ?? x.price ?? 0), 0),
+        date: Utils.formatDate(sale.completedAt || new Date(), true),
+
+        companyName: 'AutoParts',
+        footerNote: 'Спасибо за покупку!'
       });
     }
   },
@@ -986,7 +1153,8 @@ const Admin = {
     }
 
     el.innerHTML = cars.map(car => {
-      const title = `${car.carMake} ${car.carModel} (${car.year})`;
+      const yearLabel = (car.year == null || car.year === '') ? '' : ` (${car.year})`;
+      const title = `${car.carMake} ${car.carModel}${yearLabel}`;
       const meta = `${Utils.getBodyTypeName(car.bodyType)}${car.restyling ? ' • рестайлинг' : ''}`;
 
       const totalStock = car.parts.reduce((s, p) => s + (p.stock || 0), 0);
@@ -1134,16 +1302,22 @@ const Admin = {
   handleCarInfoSubmit(e) {
     e.preventDefault();
 
+    const yearRaw = (document.getElementById('carYear')?.value || '').trim();
+    const yearParsed = yearRaw ? parseInt(yearRaw, 10) : null;
+    const year = Number.isFinite(yearParsed) ? yearParsed : null;
+
     this.wizardState.carData = {
       carMake: document.getElementById('carMake')?.value || '',
       carModel: (document.getElementById('carModel')?.value || '').trim(),
-      year: parseInt(document.getElementById('carYear')?.value, 10),
+      year, // ✅ теперь может быть null
       bodyType: document.getElementById('carBody')?.value || '',
       restyling: !!document.getElementById('carRestyling')?.checked
     };
 
     const c = this.wizardState.carData;
-    if (!c.carMake || !c.carModel || !c.year || !c.bodyType) {
+
+    // ✅ Year больше НЕ обязательный
+    if (!c.carMake || !c.carModel || !c.bodyType) {
       UI.showToast('Заполните все обязательные поля', 'error');
       return;
     }
@@ -1188,12 +1362,24 @@ const Admin = {
         : (suggestedPrice ?? '');
 
       const imageUrl = existing.imageUrl || '';
+      const customTitle = existing.customTitle || '';
 
       return `
         <div class="part-detail-card" data-part="${Utils.escapeHtml(partName)}">
           <div class="part-detail-card__header">
             <h4 class="part-detail-card__title">${Utils.escapeHtml(partName)}</h4>
             <button type="button" class="part-detail-card__remove" data-remove="${Utils.escapeHtml(partName)}">✕</button>
+          </div>
+
+          <div class="form-group">
+            <label class="form-label">Кастомное название (опционально)</label>
+            <input type="text" class="form-input part-custom-title"
+              data-part="${Utils.escapeHtml(partName)}"
+              value="${Utils.escapeHtml(customTitle)}"
+              placeholder="Например: Двигатель Toyota Camry 2.4 (контрактный)">
+            <div class="muted" style="font-size:12px;">
+              Если заполнено — на сайте будет показано оно. Если пусто — заголовок соберётся автоматически: “${Utils.escapeHtml(partName)} + Марка + Модель”.
+            </div>
           </div>
 
           <div class="form-row">
@@ -1227,11 +1413,11 @@ const Admin = {
             <label class="form-label">Фото</label>
             <div class="image-upload" data-part="${Utils.escapeHtml(partName)}">
               ${imageUrl
-                ? `<div class="image-upload__preview"><img src="${imageUrl}" alt="${Utils.escapeHtml(partName)}"></div>
+          ? `<div class="image-upload__preview"><img src="${imageUrl}" alt="${Utils.escapeHtml(partName)}"></div>
                    <div class="image-upload__text">Нажмите, чтобы заменить</div>`
-                : `<div class="image-upload__icon">📷</div>
+          : `<div class="image-upload__icon">📷</div>
                    <div class="image-upload__text">Перетащите фото или кликните для выбора</div>`
-              }
+        }
               <input type="file" accept="image/*" class="part-image" data-part="${Utils.escapeHtml(partName)}">
             </div>
           </div>
@@ -1281,12 +1467,14 @@ const Admin = {
       });
     });
 
+    // ✅ Цена: помечаем как "трогали руками" (чтобы автоподстановка не перетёрла)
     document.querySelectorAll('.part-price').forEach(inp => {
       inp.addEventListener('input', () => {
         this.priceTouched.add(inp.dataset.part);
       });
     });
 
+    // ✅ Смена состояния: если цену не трогали, можно автоподставить
     document.querySelectorAll('.part-condition').forEach(sel => {
       sel.addEventListener('change', () => {
         const partName = sel.dataset.part;
@@ -1304,6 +1492,13 @@ const Admin = {
       });
     });
 
+    // ✅ Кастомное название
+    document.querySelectorAll('.part-custom-title').forEach(input => {
+      input.addEventListener('change', () => this.collectPartDetails());
+      input.addEventListener('input', Utils.debounce(() => this.collectPartDetails(), 200));
+    });
+
+    // ✅ Описание и цена (как было)
     document.querySelectorAll('.part-price, .part-description').forEach(input => {
       input.addEventListener('change', () => this.collectPartDetails());
       input.addEventListener('input', Utils.debounce(() => this.collectPartDetails(), 200));
@@ -1369,11 +1564,14 @@ const Admin = {
     document.querySelectorAll('.part-detail-card').forEach(card => {
       const partName = card.dataset.part;
 
+      const prev = this.wizardState.partsDetails[partName] || {};
+
       this.wizardState.partsDetails[partName] = {
+        customTitle: (card.querySelector('.part-custom-title')?.value || '').trim(),
         price: parseInt(card.querySelector('.part-price')?.value, 10) || 0,
         condition: card.querySelector('.part-condition')?.value || 'used',
         description: (card.querySelector('.part-description')?.value || '').trim(),
-        imageUrl: this.wizardState.partsDetails[partName]?.imageUrl || ''
+        imageUrl: prev.imageUrl || '' // ✅ не теряем, если уже загружено
       };
     });
   },
@@ -1448,9 +1646,10 @@ const Admin = {
 
         const productData = {
           partName,
+          customTitle: (details.customTitle || '').trim(), // ✅ добавили
           carMake: this.wizardState.carData.carMake,
           carModel: this.wizardState.carData.carModel,
-          year: this.wizardState.carData.year,
+          year: this.wizardState.carData.year ?? null,
           bodyType: this.wizardState.carData.bodyType,
           restyling: this.wizardState.carData.restyling,
           price: details.price,
@@ -1468,6 +1667,7 @@ const Admin = {
           batch.update(existing.ref, {
             stock: firebase.firestore.FieldValue.increment(1),
             price: productData.price,
+            customTitle: productData.customTitle || prev.customTitle || '', // ✅
             description: productData.description || prev.description || '',
             imageUrl: productData.imageUrl || prev.imageUrl || '',
             inventoryKey,

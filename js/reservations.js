@@ -52,9 +52,29 @@ const Reservations = {
         const data = doc.data();
         if ((data.stock || 0) <= 0) continue;
 
+        const priceOriginal = Number(data.price || 0);
+        const discountPercent = Number(data.discountPercent || 0);
+        const priceFinal = Utils.getPriceFinal({ priceOriginal, discountPercent });
+
         validItems.push({
           ...item,
-          price: data.price,
+
+          // ✅ подтягиваем актуальные данные
+          partName: data.partName ?? item.partName,
+          customTitle: data.customTitle ?? item.customTitle ?? '',
+
+          carMake: data.carMake ?? item.carMake,
+          carModel: data.carModel ?? item.carModel,
+          year: data.year ?? item.year ?? null,
+          bodyType: data.bodyType ?? item.bodyType,
+          restyling: !!(data.restyling ?? item.restyling),
+
+          condition: data.condition ?? item.condition,
+
+          priceOriginal,
+          discountPercent,
+          priceFinal,
+
           stock: data.stock,
           imageUrl: data.imageUrl || item.imageUrl || ''
         });
@@ -97,16 +117,29 @@ const Reservations = {
       return;
     }
 
+    const priceOriginal = Utils.getPriceOriginal(product);
+    const discountPercent = Utils.getDiscountPercent(product);
+    const priceFinal = Utils.getPriceFinal({ priceOriginal, discountPercent });
+
     this.cart.push({
       productId: product.id,
+
       partName: product.partName,
+      customTitle: product.customTitle || '',
+
       carMake: product.carMake,
       carModel: product.carModel,
       year: product.year,
       bodyType: product.bodyType,
       restyling: !!product.restyling,
+
       condition: product.condition,
-      price: product.price,
+
+      // ✅ цены
+      priceOriginal,
+      discountPercent,
+      priceFinal,
+
       imageUrl: product.imageUrl || '',
       addedAt: new Date().toISOString()
     });
@@ -134,7 +167,7 @@ const Reservations = {
   },
 
   getCartTotal() {
-    return this.cart.reduce((sum, item) => sum + (item.price || 0), 0);
+    return this.cart.reduce((sum, item) => sum + Utils.getPriceFinal(item), 0);
   },
 
   updateCartUI() {
@@ -167,13 +200,23 @@ const Reservations = {
     container.innerHTML = this.cart.map(item => {
       const imageUrl = item.imageUrl || 'data:image/svg+xml,%3Csvg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="%236c6c80"%3E%3Cpath d="M21 19V5c0-1.1-.9-2-2-2H5c-1.1 0-2 .9-2 2v14c0 1.1.9 2 2 2h14c1.1 0 2-.9 2-2zM8.5 13.5l2.5 3.01L14.5 12l4.5 6H5l3.5-4.5z"/%3E%3C/svg%3E';
 
+      const title = Utils.getProductTitle(item);
+
+      const original = Utils.getPriceOriginal(item);
+      const final = Utils.getPriceFinal(item);
+      const disc = Utils.getDiscountPercent(item);
+
+      const priceHtml = (disc > 0 && final < original)
+        ? `<span class="price-old">${Utils.formatPrice(original)}</span> <span class="price-new">${Utils.formatPrice(final)}</span>`
+        : `<span class="price-new">${Utils.formatPrice(final)}</span>`;
+
       return `
         <div class="cart-item" data-product-id="${item.productId}">
           <img src="${imageUrl}" alt="" class="cart-item__image">
           <div class="cart-item__info">
-            <div class="cart-item__name">${Utils.escapeHtml(item.partName)}</div>
+            <div class="cart-item__name">${Utils.escapeHtml(title)}</div>
             <div class="cart-item__car muted">${Utils.escapeHtml(item.carMake)} ${Utils.escapeHtml(item.carModel)}</div>
-            <div class="cart-item__price">${Utils.formatPrice(item.price || 0)}</div>
+            <div class="cart-item__price">${priceHtml}</div>
           </div>
           <button class="cart-item__remove" type="button" onclick="Reservations.removeFromCart('${item.productId}')">✕</button>
         </div>
@@ -206,137 +249,164 @@ const Reservations = {
   },
 
   async commitCheckout() {
-  if (this._checkoutInProgress) return;
-  this._checkoutInProgress = true;
+    if (this._checkoutInProgress) return;
+    this._checkoutInProgress = true;
 
-  const btn = document.getElementById('confirmCheckoutBtn');
-  const oldText = btn?.textContent || 'Подтвердить бронь';
+    const btn = document.getElementById('confirmCheckoutBtn');
+    const oldText = btn?.textContent || 'Подтвердить бронь';
 
-  try {
-    if (!Auth.isAuthenticated()) {
-      UI.openModal('authModal');
-      return;
-    }
+    try {
+      if (!Auth.isAuthenticated()) {
+        UI.openModal('authModal');
+        return;
+      }
 
-    if (!this.cart.length) {
-      UI.showToast('Корзина пуста', 'warning');
+      if (!this.cart.length) {
+        UI.showToast('Корзина пуста', 'warning');
+        UI.closeModal('checkoutModal');
+        return;
+      }
+
+      // ✅ телефон обязателен
+      const phoneRaw = document.getElementById('checkoutPhone')?.value || '';
+      const userPhone = Utils.normalizePhone(phoneRaw);
+
+      if (!userPhone) {
+        UI.showToast('Введите корректный телефон (+7XXXXXXXXXX)', 'error');
+        document.getElementById('checkoutPhone')?.focus();
+        return;
+      }
+
+      btn && (btn.disabled = true);
+      btn && (btn.textContent = 'Оформляем...');
+
+      const user = Auth.getUser();
+      const userData = Auth.getUserData();
+      const userName = userData?.name || (user?.email ? user.email.split('@')[0] : '—');
+
+      const db = firebase.firestore();
+      const orderRef = db.collection('orders').doc();
+      const orderNumber = Utils.generateOrderNumber();
+
+      // ✅ Снимок позиций с финальной ценой
+      const itemsSnapshot = this.cart.map(i => {
+        const priceOriginal = Utils.getPriceOriginal(i);
+        const discountPercent = Utils.getDiscountPercent(i);
+        const priceFinal = Utils.getPriceFinal({ priceOriginal, discountPercent });
+
+        return {
+          productId: i.productId,
+
+          // для отображения/чеков
+          title: Utils.getProductTitle(i),
+          partName: i.partName,
+          customTitle: i.customTitle || '',
+
+          carMake: i.carMake,
+          carModel: i.carModel,
+          year: i.year ?? null,
+          bodyType: i.bodyType,
+          restyling: !!i.restyling,
+          condition: i.condition,
+
+          priceOriginal,
+          discountPercent,
+          priceFinal
+        };
+      });
+
+      const total = itemsSnapshot.reduce((s, x) => s + (x.priceFinal || 0), 0);
+
+      await db.runTransaction(async (tx) => {
+        // 1) чтения
+        const reads = [];
+        for (const item of itemsSnapshot) {
+          const ref = db.collection('inventory').doc(item.productId);
+          const snap = await tx.get(ref);
+          reads.push({ item, ref, snap });
+        }
+
+        // 2) валидация
+        for (const { item, snap } of reads) {
+          if (!snap.exists) throw new Error(`Товар не найден: ${item.title || item.partName}`);
+          const stock = snap.data().stock || 0;
+          if (stock <= 0) throw new Error(`Товар закончился: ${item.title || item.partName}`);
+        }
+
+        // 3) списание
+        for (const { ref, snap } of reads) {
+          const currentStock = snap.data().stock || 0;
+          tx.update(ref, { stock: currentStock - 1 });
+        }
+
+        // заказ
+        tx.set(orderRef, {
+          orderNumber,
+          userId: user.uid,
+          userEmail: user.email,
+          userName,
+          userPhone, // ✅ сохраняем телефон
+
+          items: itemsSnapshot,
+          total,
+
+          status: 'active',
+          date: firebase.firestore.FieldValue.serverTimestamp(),
+          createdAt: firebase.firestore.FieldValue.serverTimestamp()
+        });
+      });
+
+      // успех
+      this.clearCart();
       UI.closeModal('checkoutModal');
-      return;
-    }
 
-    btn && (btn.disabled = true);
-    btn && (btn.textContent = 'Оформляем...');
-
-    const user = Auth.getUser();
-    const userData = Auth.getUserData();
-    const userName = userData?.name || (user?.email ? user.email.split('@')[0] : '—');
-
-    const db = firebase.firestore();
-    const orderRef = db.collection('orders').doc();
-    const orderNumber = Utils.generateOrderNumber();
-
-    const itemsSnapshot = this.cart.map(i => ({
-      productId: i.productId,
-      partName: i.partName,
-      carMake: i.carMake,
-      carModel: i.carModel,
-      year: i.year,
-      bodyType: i.bodyType,
-      restyling: !!i.restyling,
-      condition: i.condition,
-      price: i.price
-    }));
-
-    const total = itemsSnapshot.reduce((s, x) => s + (x.price || 0), 0);
-
-      // ✅ ИСПРАВЛЕННАЯ ТРАНЗАКЦИЯ
-    await db.runTransaction(async (tx) => {
-      // ───────────────────────────────────────────
-      // ШАГ 1: Сначала ВСЕ чтения
-      // ───────────────────────────────────────────
-      const reads = [];
-      
-      for (const item of itemsSnapshot) {
-        const ref = db.collection('inventory').doc(item.productId);
-        const snap = await tx.get(ref);
-        reads.push({ item, ref, snap });
-      }
-
-      // ───────────────────────────────────────────
-      // ШАГ 2: Валидация данных (без обращения к БД)
-      // ───────────────────────────────────────────
-      for (const { item, snap } of reads) {
-        if (!snap.exists) {
-          throw new Error(`Товар не найден: ${item.partName}`);
-        }
-        const stock = snap.data().stock || 0;
-        if (stock <= 0) {
-          throw new Error(`Товар закончился: ${item.partName}`);
-        }
-      }
-
-      // ───────────────────────────────────────────
-      // ШАГ 3: Потом ВСЕ записи
-      // ───────────────────────────────────────────
-      for (const { ref, snap } of reads) {
-        const currentStock = snap.data().stock || 0;
-        tx.update(ref, { stock: currentStock - 1 });
-      }
-
-      // Создаём заказ
-      tx.set(orderRef, {
+      UI.renderBookingResult({
         orderNumber,
-        userId: user.uid,
-        userEmail: user.email,
         userName,
         items: itemsSnapshot,
-        total,
-        status: 'active',
-        date: firebase.firestore.FieldValue.serverTimestamp(),
-        createdAt: firebase.firestore.FieldValue.serverTimestamp()
+        total
       });
-    });
+      UI.openModal('bookingResultModal');
 
-    // ✅ Успех
-    this.clearCart();
-    UI.closeModal('checkoutModal');
+      // печать: финальные цены
+      UI.printReceipt({
+        title: 'Чек бронирования',
+        orderNumber,
+        userName,
+        userPhone, // ✅ добавили телефон в чек
+        items: itemsSnapshot.map(x => ({
+          partName: x.title || x.partName,
+          qty: 1,
+          priceFinal: x.priceFinal || 0,
+          priceOriginal: x.priceOriginal || x.priceFinal || 0,
+          discountPercent: x.discountPercent || 0
+        })),
+        total,
+        date: Utils.formatDate(new Date(), true),
 
-    UI.renderBookingResult({
-      orderNumber,
-      userName,
-      items: itemsSnapshot.map(x => ({ partName: x.partName, price: x.price })),
-      total
-    });
-    UI.openModal('bookingResultModal');
+        // опционально:
+        companyName: 'AutoParts',
+        // logoUrl: 'https://.../logo.png',
+        footerNote: 'Бронь создана. Пожалуйста, дождитесь подтверждения.'
+      });
 
-    // Печать чека
-    UI.printReceipt({
-      title: 'Чек бронирования',
-      orderNumber,
-      userName,
-      items: itemsSnapshot.map(x => ({ partName: x.partName, price: x.price })),
-      total,
-      date: Utils.formatDate(new Date(), true)
-    });
+      UI.showToast(`Бронь оформлена: #${orderNumber}`, 'success');
 
-    UI.showToast(`Бронь оформлена: #${orderNumber}`, 'success');
+      if (!document.getElementById('profileSection')?.classList.contains('hidden')) {
+        this.loadUserOrders();
+      }
 
-    // Обновляем список заказов если открыт профиль
-    if (!document.getElementById('profileSection')?.classList.contains('hidden')) {
-      this.loadUserOrders();
+    } catch (e) {
+      console.error('commitCheckout error:', e);
+      UI.showToast(e?.message || 'Ошибка при оформлении брони', 'error');
+      await this.validateCart();
+      this.renderCartItems();
+    } finally {
+      btn && (btn.disabled = false);
+      btn && (btn.textContent = oldText);
+      this._checkoutInProgress = false;
     }
-
-  } catch (e) {
-    console.error('commitCheckout error:', e);
-    UI.showToast(e?.message || 'Ошибка при оформлении брони', 'error');
-    await this.validateCart();
-    this.renderCartItems();
-  } finally {
-    btn && (btn.disabled = false);
-    btn && (btn.textContent = oldText);
-    this._checkoutInProgress = false;
-  }
-},
+  },
 
   // -------------------------------
   // FIX: без orderBy -> без индекса
@@ -401,7 +471,7 @@ const Reservations = {
 
     container.innerHTML = orders.map(order => {
       const statusInfo = Config.orderStatuses[order.status] || { label: order.status, class: 'active' };
-      const total = (order.items || []).reduce((sum, item) => sum + (item.price || 0), 0);
+      const total = (order.items || []).reduce((sum, item) => sum + (item.priceFinal ?? item.price ?? 0), 0);
 
       return `
         <div class="order-card">
@@ -416,8 +486,8 @@ const Reservations = {
           <div class="order-card__items">
             ${(order.items || []).map(item => `
               <div class="order-item">
-                <span>${Utils.escapeHtml(item.partName)}</span>
-                <span>${Utils.formatPrice(item.price || 0)}</span>
+                <span>${Utils.escapeHtml(item.title || item.customTitle || item.partName)}</span>
+                <span>${Utils.formatPrice(item.priceFinal ?? item.price ?? 0)}</span>
               </div>
             `).join('')}
           </div>

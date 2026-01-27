@@ -228,8 +228,7 @@
                                 <div class="form-row">
                                     <div class="form-group">
                                         <label class="form-label" for="carYear">Год выпуска *</label>
-                                        <input type="number" class="form-input" id="carYear" min="1970" max="2026"
-                                            required />
+                                        <input type="number" class="form-input" id="carYear" min="1970" max="2026" />
                                     </div>
 
                                     <div class="form-group">
@@ -585,6 +584,11 @@
             <div class="modal__overlay" data-close-modal></div>
             <div class="modal__content">
                 <div class="form-group">
+                    <div class="form-group">
+                        <label class="form-label">Кастомное название (опционально)</label>
+                        <input id="editCustomTitle" class="form-input" type="text"
+                            placeholder="Если заполнено — будет показано на сайте">
+                    </div>
                     <label class="form-label">Фото</label>
                     <div class="image-upload image-upload--compact" id="editImageUpload">
                         <div class="image-upload__preview hidden" id="editImagePreviewWrap">
@@ -604,6 +608,11 @@
                     <div class="form-group">
                         <label class="form-label">Цена</label>
                         <input type="number" class="form-input" id="editPrice" min="0" required />
+                    </div>
+
+                    <div class="form-group">
+                        <label class="form-label">Скидка (%)</label>
+                        <input id="editDiscountPercent" class="form-input" type="number" min="0" max="100" value="0">
                     </div>
 
                     <div class="form-group">
