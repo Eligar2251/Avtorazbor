@@ -1,8 +1,11 @@
 /**
- * App.js - Главный контроллер приложения (Realtime Catalog)
+ * App.js - Главный контроллер приложения (Realtime Catalog + Cars stats)
  * Обновляет каталог моментально при изменениях inventory:
  * - добавление/обновление/удаление
  * - изменение stock после брони/отмены
+ *
+ * NEW:
+ * - realtime cars: статистика "Авто в разборе" (totalCars)
  */
 
 const App = {
@@ -24,8 +27,12 @@ const App = {
   initialized: false,
   _eventsBound: false,
 
-  // unsubscribe realtime listeners
+  // realtime unsubscribers
   _unsubInventory: null,
+  _unsubCars: null,
+
+  // cars stats cache
+  carsData: [],
 
   async init() {
     if (this.initialized) return;
@@ -40,13 +47,14 @@ const App = {
       this.bindEvents();
       this.populateFilters();
 
-      // ВАЖНО: realtime каталог (главная фича для “обновлялось без F5”)
+      // realtime listeners
       this.subscribeInventoryRealtime();
+      this.subscribeCarsRealtime();
 
       Auth.onAuthChanged((user, userData) => this.handleAuthChange(user, userData));
 
       this.initialized = true;
-      console.log('✅ AutoParts инициализирован (Realtime)');
+      console.log('✅ AutoParts инициализирован (Realtime + Cars)');
     } catch (error) {
       console.error('❌ Ошибка инициализации:', error);
       UI.showToast('Ошибка загрузки приложения', 'error');
@@ -128,7 +136,7 @@ const App = {
   },
 
   /**
-   * ВАЖНО: обновление моделей без запросов к Firestore (без индексов)
+   * Модели без запросов к Firestore
    * Берём уникальные модели из текущего каталога products
    */
   updateModelFilterFromCache() {
@@ -162,7 +170,7 @@ const App = {
 
   /**
    * Realtime подписка на inventory
-   * Товар добавили/изменили/удалили -> UI обновится моментально.
+   * Слушаем только то, что реально в наличии (stock>0)
    */
   subscribeInventoryRealtime() {
     if (this._unsubInventory) return;
@@ -171,8 +179,6 @@ const App = {
 
     const db = firebase.firestore();
 
-    // Можно слушать только то, что реально в наличии:
-    // Документ уйдёт из результатов когда stock станет 0.
     this._unsubInventory = db.collection('inventory')
       .where('stock', '>', 0)
       .onSnapshot((snapshot) => {
@@ -181,16 +187,20 @@ const App = {
           ...doc.data()
         }));
 
-        // обновим фильтр моделей (если марка выбрана)
+        // обновим фильтр моделей
         this.updateModelFilterFromCache();
 
-        // перерисуем каталог по текущим фильтрам
+        // перерисуем каталог
         this.applyFilters();
 
-        // обновим статистику на главной
+        // stats: totalParts
         let totalParts = 0;
         this.catalog.products.forEach(p => totalParts += (p.stock || 0));
-        UI.updateStats({ totalParts });
+
+        UI.updateStats({
+          totalParts,
+          totalCars: this.getActiveCarsCount()
+        });
 
       }, (error) => {
         console.error('subscribeInventoryRealtime error:', error);
@@ -198,6 +208,49 @@ const App = {
         document.getElementById('loadingState')?.classList.add('hidden');
         document.getElementById('emptyState')?.classList.remove('hidden');
       });
+  },
+
+  /**
+   * NEW: Realtime подписка на cars
+   * Нужна для статистики "Авто в разборе"
+   *
+   * Важно: чтобы не требовать индексы — без orderBy и без сложных where-комбо.
+   */
+  subscribeCarsRealtime() {
+    if (this._unsubCars) return;
+
+    const db = firebase.firestore();
+
+    this._unsubCars = db.collection('cars')
+      .onSnapshot((snap) => {
+        this.carsData = snap.docs.map(d => ({ id: d.id, ...d.data() }));
+
+        // обновим stats (parts уже может быть посчитан по inventory)
+        let totalParts = 0;
+        this.catalog.products.forEach(p => totalParts += (p.stock || 0));
+
+        UI.updateStats({
+          totalParts,
+          totalCars: this.getActiveCarsCount()
+        });
+
+      }, (err) => {
+        console.error('subscribeCarsRealtime error:', err);
+        UI.showToast('Ошибка realtime авто', 'error');
+      });
+  },
+
+  /**
+   * Авто "в разборе" считаем по статусу:
+   * - если status не задан => считаем active
+   * - если задан => active
+   */
+  getActiveCarsCount() {
+    const cars = this.carsData || [];
+    return cars.filter(c => {
+      const s = String(c.status || 'active').toLowerCase();
+      return s === 'active';
+    }).length;
   },
 
   applyFilters() {
@@ -213,7 +266,7 @@ const App = {
       const q = f.search.toLowerCase();
       filtered = filtered.filter(p =>
         (p.partName || '').toLowerCase().includes(q) ||
-        (p.customTitle || '').toLowerCase().includes(q) || // ✅ добавили кастомный заголовок в поиск
+        (p.customTitle || '').toLowerCase().includes(q) || // NEW
         (p.carMake || '').toLowerCase().includes(q) ||
         (p.carModel || '').toLowerCase().includes(q) ||
         (p.description || '').toLowerCase().includes(q)
@@ -229,6 +282,9 @@ const App = {
     this.renderPage();
   },
 
+  /**
+   * NEW: сортировка по цене учитывает скидку (priceFinal)
+   */
   sortProducts(products) {
     switch (this.catalog.sort) {
       case 'price_asc':
@@ -289,6 +345,12 @@ const App = {
       UI.showToast('Товар не найден', 'error');
       return;
     }
+
+    // (опционально) title страницы
+    try {
+      document.title = `${Utils.getProductTitle(product)} — AutoParts`;
+    } catch (_) {}
+
     UI.renderProductDetail(product);
     UI.openModal('productModal');
   },

@@ -1,6 +1,10 @@
 /**
- * UI.js - Управление интерфейсом
- * Совместим с App.js / Admin.js / Auth.js / Reservations.js из последних версий.
+ * UI.js - Управление интерфейсом (FIXED)
+ * Важно:
+ * - Добавлен UI.renderBookingResult() (чинит бронирование)
+ * - Есть UI.confirm() (нужен Admin/Reservations)
+ * - Есть рендер каталога/деталки/checkout
+ * - printReceipt: admin-only (по умолчанию)
  */
 
 const UI = {
@@ -46,7 +50,7 @@ const UI = {
     if (this._bound) return;
     this._bound = true;
 
-    // Закрываем только текущую модалку
+    // close modal by [data-close-modal]
     document.addEventListener('click', (e) => {
       const closeEl = e.target.closest('[data-close-modal]');
       if (!closeEl) return;
@@ -56,7 +60,7 @@ const UI = {
       else this.closeAllModals();
     });
 
-    // Escape
+    // escape closes modals
     document.addEventListener('keydown', (e) => {
       if (e.key === 'Escape') this.closeAllModals();
     });
@@ -69,13 +73,13 @@ const UI = {
       this.navigate(nav.dataset.navigate);
     });
 
-    // Админка кнопка
+    // admin btn
     this.elements.adminBtn?.addEventListener('click', () => {
       this.navigate('admin');
       window.Admin?.init?.();
     });
 
-    // Делегация клика по карточкам товара (оптимизация)
+    // click on product cards (delegation)
     this.elements.productsGrid?.addEventListener('click', (e) => {
       const card = e.target.closest('.product-card');
       if (!card) return;
@@ -85,7 +89,7 @@ const UI = {
   },
 
   // ==========================================
-  // Навигация
+  // Navigation
   // ==========================================
   navigate(section) {
     this.closeAllModals();
@@ -114,14 +118,6 @@ const UI = {
         this.elements.heroSection?.classList.remove('hidden');
         this.elements.catalogSection?.classList.remove('hidden');
     }
-  },
-
-  showSection(sectionId) {
-    document.getElementById(sectionId)?.classList.remove('hidden');
-  },
-
-  hideSection(sectionId) {
-    document.getElementById(sectionId)?.classList.add('hidden');
   },
 
   // ==========================================
@@ -159,16 +155,13 @@ const UI = {
   updateCartCount(count) {
     if (!this.elements.cartCount) return;
     this.elements.cartCount.textContent = String(count);
-    this.elements.cartCount.style.display = count > 0 ? 'flex' : 'none';
+    this.elements.cartCount.style.display = count > 0 ? 'grid' : 'none';
   },
 
   updateProfileButton(user) {
     if (!this.elements.profileText) return;
-    if (user?.email) {
-      this.elements.profileText.textContent = Utils.truncate(user.email.split('@')[0], 10);
-    } else {
-      this.elements.profileText.textContent = 'Войти';
-    }
+    if (user?.email) this.elements.profileText.textContent = Utils.truncate(user.email.split('@')[0], 10);
+    else this.elements.profileText.textContent = 'Войти';
   },
 
   // ==========================================
@@ -196,19 +189,20 @@ const UI = {
 
   removeToast(toast) {
     if (!toast) return;
-    toast.style.animation = 'toastOut 180ms ease forwards';
+    toast.style.opacity = '0';
+    toast.style.transform = 'translateY(6px)';
+    toast.style.transition = 'opacity 180ms ease, transform 180ms ease';
     setTimeout(() => toast.remove(), 180);
   },
 
   // ==========================================
-  // Filters helpers (ВОТ ЭТОГО У ТЕБЯ НЕ ХВАТАЛО)
+  // Select helpers
   // ==========================================
   populateMakesSelect(select, includeEmpty = true) {
     if (!select) return;
 
     let html = includeEmpty ? '<option value="">Все марки</option>' : '';
     (Config.carMakes || []).forEach(make => {
-      // value не экранируем через innerHTML (в make нет html), но безопаснее:
       const safe = Utils.escapeHtml(String(make));
       html += `<option value="${safe}">${safe}</option>`;
     });
@@ -259,14 +253,12 @@ const UI = {
     const title = Utils.getProductTitle(product);
 
     const priceOriginal = Utils.getPriceOriginal(product);
-    const discountPercent = Utils.getDiscountPercent(product);
-    const priceFinal = Utils.getPriceFinal({ priceOriginal, discountPercent });
+    const disc = Utils.getDiscountPercent(product);
+    const priceFinal = Utils.getPriceFinal({ priceOriginal, discountPercent: disc });
 
-    const priceHtml = (discountPercent > 0 && priceFinal < priceOriginal)
-      ? `
-      <span class="price-old">${Utils.formatPrice(priceOriginal)}</span>
-      <span class="price-new">${Utils.formatPrice(priceFinal)}</span>
-    `
+    const priceHtml = (disc > 0 && priceFinal < priceOriginal)
+      ? `<span class="price-old">${Utils.formatPrice(priceOriginal)}</span>
+         <span class="price-new">${Utils.formatPrice(priceFinal)}</span>`
       : `<span class="price-new">${Utils.formatPrice(priceOriginal)}</span>`;
 
     return `
@@ -349,21 +341,19 @@ const UI = {
     if (!container) return;
 
     const conditionText = product.condition === 'new' ? 'Новое' : 'Б/У';
-    const imageUrl = product.imageUrl || 'data:image/svg+xml,%3Csvg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="%236c6c80"%3E%3Cpath d="M21 19V5c0-1.1-.9-2-2-2H5c-1.1 0-2 .9-2 2v14c0 1.1.9 2 2 2h14c1.1 0 2-.9 2-2zM8.5 13.5l2.5 3.01L14.5 12l4.5 6H5l3.5-4.5z"/%3E%3C/svg%3E';
+    const imageUrl = product.imageUrl || 'data:image/svg+xml,%3Csvg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="%236c6c80"%3E%3Cpath d="M21 19V5c0-1.1-.9-2-2-2H5c-1.1 0-2 .9-2 2v14c0 1.1.9 2 2 2h14c0-1.1-.9-2-2-2zM8.5 13.5l2.5 3.01L14.5 12l4.5 6H5l3.5-4.5z"/%3E%3C/svg%3E';
 
     const title = Utils.getProductTitle(product);
 
     const priceOriginal = Utils.getPriceOriginal(product);
-    const discountPercent = Utils.getDiscountPercent(product);
-    const priceFinal = Utils.getPriceFinal({ priceOriginal, discountPercent });
+    const disc = Utils.getDiscountPercent(product);
+    const priceFinal = Utils.getPriceFinal({ priceOriginal, discountPercent: disc });
 
-    const priceHtml = (discountPercent > 0 && priceFinal < priceOriginal)
-      ? `
-      <div class="product-detail__price">
-        <span class="price-old">${Utils.formatPrice(priceOriginal)}</span>
-        <span class="price-new">${Utils.formatPrice(priceFinal)}</span>
-      </div>
-    `
+    const priceHtml = (disc > 0 && priceFinal < priceOriginal)
+      ? `<div class="product-detail__price">
+          <span class="price-old">${Utils.formatPrice(priceOriginal)}</span>
+          <span class="price-new">${Utils.formatPrice(priceFinal)}</span>
+        </div>`
       : `<div class="product-detail__price"><span class="price-new">${Utils.formatPrice(priceOriginal)}</span></div>`;
 
     container.innerHTML = `
@@ -381,14 +371,13 @@ const UI = {
           <span class="product-detail__tag">${Utils.getBodyTypeName(product.bodyType)}</span>
           ${product.restyling ? '<span class="product-detail__tag">Рестайлинг</span>' : ''}
           <span class="product-detail__tag">В наличии: ${product.stock || 0} шт.</span>
-          ${discountPercent > 0 ? `<span class="product-detail__tag">Скидка: ${discountPercent}%</span>` : ''}
         </div>
 
         ${product.description ? `<p class="product-detail__description">${Utils.escapeHtml(product.description)}</p>` : ''}
 
         <button class="btn btn--primary btn--lg btn--full" id="addToCartBtn" type="button"
           ${(!product.stock || product.stock === 0) ? 'disabled' : ''}>
-          ${(!product.stock || product.stock === 0) ? 'Нет в наличии' : 'Забронировать'}
+          ${(!product.stock || product.stock === 0) ? 'Нет в наличии' : 'В корзину'}
         </button>
       </div>
     `;
@@ -399,47 +388,53 @@ const UI = {
   },
 
   // ==========================================
-  // Checkout rendering
+  // Checkout summary
   // ==========================================
   renderCheckoutSummary(cart, userName, userEmail) {
     const el = document.getElementById('checkoutSummary');
     if (!el) return;
 
-    const total = (cart || []).reduce((s, i) => s + Utils.getPriceFinal(i), 0);
+    const total = (cart || []).reduce((s, i) => {
+      const qty = Math.max(1, parseInt(i.qty, 10) || 1);
+      return s + Utils.getPriceFinal(i) * qty;
+    }, 0);
 
     el.innerHTML = `
-      <div class="checkout-box">
-        <div class="checkout-row">
-          <span class="muted">Покупатель</span>
-          <strong>${Utils.escapeHtml(userName || '—')}</strong>
-        </div>
+    <div class="checkout-box">
+      <div class="checkout-row">
+        <span class="muted">Покупатель</span>
+        <strong>${Utils.escapeHtml(userName || '—')}</strong>
+      </div>
 
-        <div class="checkout-row">
-          <span class="muted">Email</span>
-          <strong>${Utils.escapeHtml(userEmail || '—')}</strong>
-        </div>
+      <div class="checkout-row">
+        <span class="muted">Email</span>
+        <strong>${Utils.escapeHtml(userEmail || '—')}</strong>
+      </div>
 
-        <div class="checkout-row" style="align-items:flex-start;">
-          <span class="muted">Телефон *</span>
-          <div style="flex:1;">
-            <input
-              id="checkoutPhone"
-              class="form-input"
-              type="tel"
-              inputmode="tel"
-              autocomplete="tel"
-              placeholder="+7 (999) 000-00-00"
-              required
-            >
-            <div class="muted" style="font-size:12px;margin-top:6px;">
-              Нужен для связи по брони.
-            </div>
+      <div class="checkout-row" style="align-items:flex-start;">
+        <span class="muted">Телефон *</span>
+        <div style="flex:1;">
+          <input
+            id="checkoutPhone"
+            class="form-input"
+            type="tel"
+            inputmode="tel"
+            autocomplete="tel"
+            placeholder="+7 (999) 000-00-00"
+            required
+          >
+          <div class="muted" style="font-size:12px;margin-top:6px;">
+            Нужен для связи по брони.
           </div>
         </div>
+      </div>
 
-        <div class="checkout-items">
-          ${(cart || []).map((i) => {
+      <div class="checkout-items">
+        ${(cart || []).map((i) => {
       const title = Utils.getProductTitle(i);
+
+      const qty = Math.max(1, parseInt(i.qty, 10) || 1);
+
       const original = Utils.getPriceOriginal(i);
       const final = Utils.getPriceFinal(i);
       const disc = Utils.getDiscountPercent(i);
@@ -448,27 +443,36 @@ const UI = {
         ? `<span class="price-old">${Utils.formatPrice(original)}</span> <span class="price-new">${Utils.formatPrice(final)}</span>`
         : `<span class="price-new">${Utils.formatPrice(final)}</span>`;
 
+      const lineTotal = final * qty;
+
       return `
-              <div class="checkout-item">
+            <div class="checkout-item" style="display:flex;justify-content:space-between;gap:12px;">
+              <div>
                 <div class="checkout-item__name">${Utils.escapeHtml(title)}</div>
-                <div class="checkout-item__price">${priceHtml}</div>
+                <div class="muted" style="font-size:12px;margin-top:4px;">
+                  ${priceHtml}
+                  <span class="muted"> × ${qty} = <strong>${Utils.formatPrice(lineTotal)}</strong></span>
+                </div>
               </div>
-            `;
+              <div style="white-space:nowrap;font-weight:800;">
+                ${Utils.formatPrice(lineTotal)}
+              </div>
+            </div>
+          `;
     }).join('')}
-        </div>
-
-        <div class="checkout-total">
-          <span>Итого</span>
-          <strong>${Utils.formatPrice(total)}</strong>
-        </div>
-
-        <p class="checkout-note">
-          После подтверждения бронь получит статус <strong>“Ожидает”</strong>.
-        </p>
       </div>
-    `;
 
-    // ✅ маска телефона
+      <div class="checkout-total">
+        <span>Итого</span>
+        <strong>${Utils.formatPrice(total)}</strong>
+      </div>
+
+      <p class="checkout-note">
+        После подтверждения бронь получит статус <strong>“Ожидает”</strong>.
+      </p>
+    </div>
+  `;
+
     const phoneInput = document.getElementById('checkoutPhone');
     if (phoneInput) {
       phoneInput.addEventListener('input', () => Utils.maskPhoneInput(phoneInput));
@@ -476,42 +480,73 @@ const UI = {
     }
   },
 
+  // ==========================================
+  // ✅ Booking result (FIXED)
+  // ==========================================
   renderBookingResult({ orderNumber, userName, items, total }) {
     const el = document.getElementById('bookingResultContent');
     if (!el) return;
 
+    const safeItems = (items || []).map(it => ({
+      ...it,
+      qty: Math.max(1, parseInt(it.qty, 10) || 1)
+    }));
+
+    const computedTotal = safeItems.reduce((s, it) => {
+      const price = Number(it.priceFinal ?? it.price ?? 0);
+      return s + price * (it.qty || 1);
+    }, 0);
+
+    const finalTotal = Number.isFinite(Number(total)) ? Number(total) : computedTotal;
+
     el.innerHTML = `
-      <div class="booking-result">
-        <div class="booking-result__box">
-          <div class="booking-result__row">
-            <span class="muted">Номер брони</span>
-            <strong>#${Utils.escapeHtml(orderNumber || '—')}</strong>
-          </div>
-          <div class="booking-result__row">
-            <span class="muted">Покупатель</span>
-            <strong>${Utils.escapeHtml(userName || '—')}</strong>
-          </div>
+    <div class="booking-result">
+      <div class="booking-result__box">
+        <div class="booking-result__row">
+          <span class="muted">Номер брони</span>
+          <strong>#${Utils.escapeHtml(orderNumber || '—')}</strong>
+        </div>
 
-          <div class="booking-result__items">
-            ${(items || []).map((it, idx) => `
-              <div class="booking-result__item">
-                <div>${idx + 1}. ${Utils.escapeHtml(it.title || it.partName)}</div>
-                <div><strong>${Utils.formatPrice(it.priceFinal ?? it.price ?? 0)}</strong></div>
+        <div class="booking-result__row">
+          <span class="muted">Покупатель</span>
+          <strong>${Utils.escapeHtml(userName || '—')}</strong>
+        </div>
+
+        <div class="booking-result__items">
+          ${safeItems.map((it, idx) => {
+      const price = Number(it.priceFinal ?? it.price ?? 0);
+      const qty = it.qty || 1;
+      const line = price * qty;
+
+      const title = it.title || it.customTitle || it.partName || 'Товар';
+
+      return `
+              <div class="booking-result__item" style="display:flex;justify-content:space-between;gap:12px;">
+                <div>
+                  <div>${idx + 1}. ${Utils.escapeHtml(title)}</div>
+                  <div class="muted" style="font-size:12px;margin-top:4px;">
+                    ${Utils.formatPrice(price)} × ${qty} = <strong>${Utils.formatPrice(line)}</strong>
+                  </div>
+                </div>
+                <div style="white-space:nowrap;font-weight:800;">
+                  ${Utils.formatPrice(line)}
+                </div>
               </div>
-            `).join('')}
-          </div>
+            `;
+    }).join('')}
+        </div>
 
-          <div class="booking-result__total">
-            <span>Итого</span>
-            <span>${Utils.formatPrice(total || 0)}</span>
-          </div>
+        <div class="booking-result__total">
+          <span>Итого</span>
+          <span>${Utils.formatPrice(finalTotal)}</span>
         </div>
       </div>
-    `;
+    </div>
+  `;
   },
 
   // ==========================================
-  // Confirm modal
+  // Confirm modal (used by Admin/Reservations)
   // ==========================================
   async confirm(title, message) {
     const titleEl = document.getElementById('confirmTitle');
@@ -519,10 +554,13 @@ const UI = {
     const confirmBtn = document.getElementById('confirmAction');
     const modal = document.getElementById('confirmModal');
 
-    if (!modal || !confirmBtn) return false;
+    // fallback if confirm modal not present
+    if (!modal || !confirmBtn) {
+      return window.confirm(`${title}\n\n${message}`);
+    }
 
-    if (titleEl) titleEl.textContent = title;
-    if (messageEl) messageEl.textContent = message;
+    if (titleEl) titleEl.textContent = title || '';
+    if (messageEl) messageEl.textContent = message || '';
 
     return new Promise((resolve) => {
       const cleanup = () => {
@@ -556,263 +594,329 @@ const UI = {
   },
 
   // ==========================================
-  // Print receipt 80mm
+  // Receipt (admin-only)
   // ==========================================
-  buildReceiptHtml({
-    title,
-    orderNumber,
-    userName,
-    userPhone,
-    items,
-    total,
-    date,
-    companyName,
-    logoUrl,
-    footerNote
-  }) {
-    const safeTitle = Utils.escapeHtml(title || 'Чек');
+  buildReceiptHtml(data = {}, options = {}) {
+    const receiptCfg = (window.Config?.receipt || {});
 
-    // company
-    const safeCompany = Utils.escapeHtml(companyName || 'AutoParts');
+    const companyName = String(data.companyName || receiptCfg.companyName || 'AutoParts').trim();
+    const logoUrl = String(data.logoUrl || receiptCfg.logoUrl || '').trim();
 
-    // можно прокинуть logoUrl в вызове, либо (опционально) хранить в Config.receiptLogoUrl
-    const finalLogoUrl = String(logoUrl || (Config.receiptLogoUrl || '') || '').trim();
-    const safeLogo = Utils.escapeHtml(finalLogoUrl);
+    const title = String(data.title || 'Товарный чек').trim();
 
-    // meta
-    const safeNum = Utils.escapeHtml(orderNumber || '—');
-    const safeName = Utils.escapeHtml(userName || '—');
-    const safePhone = Utils.escapeHtml(userPhone || '');
-    const safeDate = Utils.escapeHtml(date || Utils.formatDate(new Date(), true));
+    const orderNumber = String(data.orderNumber || '—').trim();
+    const userName = String(data.userName || '—').trim();
+    const userPhone = String(data.userPhone || '').trim();
 
-    const list = (items || []).map((it, idx) => {
-      const name = Utils.escapeHtml(String(it?.partName || it?.title || 'Товар'));
-      const qty = Number(it?.qty ?? 1);
-      const qtySafe = Number.isFinite(qty) && qty > 0 ? qty : 1;
+    const dateStr = String(
+      data.date || Utils.formatDate(new Date(), true)
+    ).trim();
 
-      // поддержка разных форматов:
-      // - старый: { partName, price }
-      // - новый: { partName/title, priceFinal, priceOriginal, discountPercent }
-      const priceFinal = Number(it?.priceFinal ?? it?.price ?? 0);
-      const priceOriginal = Number(it?.priceOriginal ?? priceFinal ?? 0);
-      const discountPercent = Number(it?.discountPercent ?? 0);
+    const footerNote = String(data.footerNote || '').trim();
 
-      const finalLine = (Number.isFinite(priceFinal) ? priceFinal : 0) * qtySafe;
-      const origLine = (Number.isFinite(priceOriginal) ? priceOriginal : 0) * qtySafe;
+    // paper:
+    // - 'A4' (default): печать на лист A4, чек центрируется, ширина чека ~80мм
+    // - '80mm': под термопринтер, @page 80mm auto
+    const paper = (options.paper || 'A4').toLowerCase();
+    const is80 = paper === '80mm' || paper === '80' || paper === 'receipt80';
 
-      const hasDiscount = discountPercent > 0 && finalLine < origLine;
+    // Нормализация позиций
+    const normalizedItems = (data.items || []).map((it) => {
+      const name = String(it.partName || it.title || it.name || 'Товар').trim();
 
-      return `
-      <tr class="item-row">
-        <td class="col-n">${idx + 1}</td>
-        <td class="col-name">
-          <div class="name">${name}</div>
-          ${qtySafe !== 1 ? `<div class="sub">Кол-во: ${qtySafe}</div>` : ''}
-          ${hasDiscount ? `<div class="sub">Скидка: ${Utils.escapeHtml(String(discountPercent))}%</div>` : ''}
-        </td>
-        <td class="col-sum">
-          ${hasDiscount ? `<div class="old">${Utils.formatPrice(origLine)}</div>` : ''}
-          <div class="new">${Utils.formatPrice(finalLine)}</div>
-        </td>
-      </tr>
-    `;
-    }).join('');
+      let qty = parseInt(it.qty, 10);
+      if (!Number.isFinite(qty) || qty <= 0) qty = 1;
 
-    const safeFooter = Utils.escapeHtml(footerNote || 'Спасибо за покупку!');
+      // unitPrice: предпочитаем unitPrice, затем priceFinal, затем price
+      let unitPrice = Number(it.unitPrice ?? it.priceFinal ?? it.price ?? 0);
+      if (!Number.isFinite(unitPrice) || unitPrice < 0) unitPrice = 0;
 
-    return `
-      <!doctype html>
+      // Если раньше передавали price как "сумма строки" (unit*qty) и qty не передавали,
+      // то qty станет 1 и это ок. Но если qty передали, а price передали как lineTotal,
+      // то можно ошибиться. Поэтому даём возможность передавать lineTotal явно.
+      let lineTotal = Number(it.lineTotal);
+      if (Number.isFinite(lineTotal) && lineTotal >= 0) {
+        // ok
+      } else {
+        lineTotal = unitPrice * qty;
+      }
+
+      return { name, qty, unitPrice, lineTotal };
+    });
+
+    const computedTotal = normalizedItems.reduce((s, x) => s + (Number(x.lineTotal) || 0), 0);
+    const total = Number.isFinite(Number(data.total)) ? Number(data.total) : computedTotal;
+
+    const safe = (v) => Utils.escapeHtml(String(v ?? ''));
+
+    const itemsRows = normalizedItems.map((it, idx) => `
+    <tr>
+      <td class="c-num">${idx + 1}</td>
+      <td class="c-name">${safe(it.name)}</td>
+      <td class="c-qty">${it.qty}</td>
+      <td class="c-unit">${Utils.formatPrice(it.unitPrice)}</td>
+      <td class="c-sum">${Utils.formatPrice(it.lineTotal)}</td>
+    </tr>
+  `).join('');
+
+    // CSS: A4 с центром и ограничением ширины; либо термочек 80mm.
+    const pageCss = is80
+      ? `@page { size: 80mm auto; margin: 6mm; }`
+      : `@page { size: A4; margin: 12mm; }`;
+
+    const wrapperCss = is80
+      ? `width: 80mm; margin: 0;`
+      : `width: 80mm; margin: 0 auto;`; // центрируем “чек” на A4
+
+    const logoHtml = logoUrl
+      ? `<div class="logo"><img src="${safe(logoUrl)}" alt="${safe(companyName)}"></div>`
+      : '';
+
+    return `<!doctype html>
       <html lang="ru">
       <head>
         <meta charset="utf-8"/>
         <meta name="viewport" content="width=device-width,initial-scale=1"/>
-        <title>${safeTitle}</title>
+        <title>${safe(title)} — ${safe(orderNumber)}</title>
         <style>
-          /* 80mm receipt */
-          @page { size: 80mm auto; margin: 5mm; }
+          ${pageCss}
 
-          html, body { width: 70mm; } /* 80 - 2*5mm = 70mm */
-          body {
+          html, body {
+            padding: 0;
             margin: 0;
-            color: #000;
-            font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, "Liberation Mono", "Courier New", monospace;
-            font-size: 12px;
-            line-height: 1.35;
+            background: #fff;
+            color: #111;
             -webkit-print-color-adjust: exact;
             print-color-adjust: exact;
           }
 
-          .center { text-align: center; }
-          .muted { color: #333; }
-
-          .header {
-            display: flex;
-            align-items: center;
-            justify-content: center;
-            gap: 8px;
-            margin-bottom: 4px;
+          /* На экране показываем как лист с центром */
+          .sheet {
+            min-height: 100vh;
+            padding: 16px 0;
+            box-sizing: border-box;
+            background: #f6f7fb;
           }
-          .logo {
-            width: 28px;
-            height: 28px;
+
+          /* В печати фон не нужен */
+          @media print {
+            .sheet { background: #fff; padding: 0; }
+            .no-print { display: none !important; }
+          }
+
+          .receipt {
+            ${wrapperCss}
+            background: #fff;
+            box-sizing: border-box;
+            padding: 10mm 8mm;
+            border: 1px solid rgba(0,0,0,0.08);
+            border-radius: 10px;
+          }
+
+          @media print {
+            .receipt {
+              border: none;
+              border-radius: 0;
+              padding: 0;
+            }
+          }
+
+          .head {
+            text-align: center;
+            margin-bottom: 10px;
+          }
+
+          .logo img {
+            max-width: 46mm;
+            max-height: 22mm;
             object-fit: contain;
-            display: block;
+            display: inline-block;
+            margin: 0 auto 6px;
           }
+
           .company {
-            font-weight: 900;
-            font-size: 16px;
-            letter-spacing: .2px;
+            font: 800 16px/1.2 system-ui, -apple-system, Segoe UI, Roboto, Arial, sans-serif;
+            letter-spacing: 0.2px;
           }
+
           .title {
-            font-weight: 700;
-            margin-top: 2px;
-            margin-bottom: 6px;
+            font: 700 13px/1.2 system-ui, -apple-system, Segoe UI, Roboto, Arial, sans-serif;
+            margin-top: 4px;
           }
 
-          .dash {
-            border-top: 1px dashed #000;
-            margin: 8px 0;
+          .muted {
+            color: #555;
+            font: 500 11px/1.25 system-ui, -apple-system, Segoe UI, Roboto, Arial, sans-serif;
           }
 
-          .kv {
+          .hr {
+            border-top: 1px dashed rgba(0,0,0,0.35);
+            margin: 10px 0;
+          }
+
+          .meta {
             display: grid;
             grid-template-columns: 1fr auto;
-            gap: 2px 10px;
-            font-size: 12px;
+            gap: 6px 10px;
+            align-items: baseline;
+            font: 500 11px/1.35 system-ui, -apple-system, Segoe UI, Roboto, Arial, sans-serif;
           }
-          .kv .k { color: #111; }
-          .kv .v { text-align: right; white-space: nowrap; }
+
+          .meta .k { color: #555; }
+          .meta .v { font-weight: 700; text-align: right; white-space: nowrap; }
 
           table {
             width: 100%;
             border-collapse: collapse;
-            table-layout: fixed; /* важно для печати */
+            font: 500 11px/1.35 ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, "Liberation Mono", "Courier New", monospace;
           }
+
           thead th {
-            font-size: 11px;
-            text-transform: uppercase;
-            letter-spacing: .4px;
-            padding: 4px 0;
-            border-bottom: 1px solid #000;
-          }
-          tbody td {
-            vertical-align: top;
+            text-align: left;
+            font-weight: 800;
             padding: 6px 0;
-            border-bottom: 1px dashed #000;
+            border-bottom: 1px solid rgba(0,0,0,0.18);
           }
 
-          .col-n { width: 18px; padding-right: 6px; }
-          .col-name { width: auto; padding-right: 6px; }
-          .col-sum { width: 86px; text-align: right; }
-
-          .name {
-            word-break: break-word;
-            overflow-wrap: anywhere;
-          }
-          .sub {
-            font-size: 11px;
-            color: #333;
-            margin-top: 2px;
+          tbody td {
+            padding: 6px 0;
+            vertical-align: top;
+            border-bottom: 1px dashed rgba(0,0,0,0.12);
           }
 
-          .old {
-            text-decoration: line-through;
-            opacity: .75;
-            font-size: 11px;
-            margin-bottom: 1px;
-            white-space: nowrap;
-          }
-          .new {
-            font-weight: 900;
-            white-space: nowrap;
-          }
+          .c-num { width: 6mm; }
+          .c-qty { width: 10mm; text-align: right; white-space: nowrap; }
+          .c-unit { width: 20mm; text-align: right; white-space: nowrap; }
+          .c-sum { width: 22mm; text-align: right; white-space: nowrap; font-weight: 800; }
+          .c-name { padding-right: 6px; }
 
           .total {
             display: grid;
             grid-template-columns: 1fr auto;
-            gap: 6px 10px;
-            align-items: end;
-            margin-top: 8px;
-            font-size: 13px;
-          }
-          .total .label { font-weight: 800; }
-          .total .value { font-weight: 900; font-size: 16px; white-space: nowrap; }
-
-          .footer {
+            gap: 10px;
+            align-items: baseline;
             margin-top: 10px;
-            font-size: 11px;
+            font: 900 14px/1.2 system-ui, -apple-system, Segoe UI, Roboto, Arial, sans-serif;
           }
+
           .sign {
-            margin-top: 10px;
-            font-size: 12px;
+            margin-top: 14px;
+            font: 500 11px/1.35 system-ui, -apple-system, Segoe UI, Roboto, Arial, sans-serif;
+            color: #222;
+            display: grid;
+            gap: 8px;
           }
 
-          /* screen preview a bit nicer */
-          @media screen {
-            body { padding: 10px; background: #fff; }
+          .sign .line {
+            display: grid;
+            grid-template-columns: auto 1fr;
+            gap: 8px;
+            align-items: center;
+          }
+
+          .sign .blank {
+            border-bottom: 1px solid rgba(0,0,0,0.35);
+            height: 0;
+          }
+
+          .footnote {
+            margin-top: 10px;
+            font: 500 10px/1.35 system-ui, -apple-system, Segoe UI, Roboto, Arial, sans-serif;
+            color: #555;
+            text-align: center;
+          }
+
+          .printbar {
+            display:flex;
+            justify-content:center;
+            gap:10px;
+            margin-top: 14px;
+          }
+          .btn {
+            border: 1px solid rgba(0,0,0,0.18);
+            background: #fff;
+            padding: 10px 14px;
+            border-radius: 10px;
+            cursor: pointer;
+            font: 700 14px/1 system-ui, -apple-system, Segoe UI, Roboto, Arial, sans-serif;
           }
         </style>
       </head>
+
       <body>
-        <div class="center">
-          <div class="header">
-            ${safeLogo
-        ? `<img class="logo" src="${safeLogo}" alt="logo" />`
-        : ``}
-            <div class="company">${safeCompany}</div>
+        <div class="sheet">
+          <div class="receipt">
+            <div class="head">
+              ${logoHtml}
+              <div class="company">${safe(companyName)}</div>
+              <div class="title">${safe(title)}</div>
+              <div class="muted">${safe(dateStr)}</div>
+            </div>
+
+            <div class="hr"></div>
+
+            <div class="meta">
+              <div class="k">Номер</div><div class="v">#${safe(orderNumber)}</div>
+              <div class="k">Клиент</div><div class="v">${safe(userName)}</div>
+              ${userPhone ? `<div class="k">Телефон</div><div class="v">${safe(userPhone)}</div>` : ``}
+            </div>
+
+            <div class="hr"></div>
+
+            <table>
+              <thead>
+                <tr>
+                  <th class="c-num">№</th>
+                  <th>Наименование</th>
+                  <th class="c-qty">Кол</th>
+                  <th class="c-unit">Цена</th>
+                  <th class="c-sum">Сумма</th>
+                </tr>
+              </thead>
+              <tbody>
+                ${itemsRows || `<tr><td colspan="5" class="muted">Нет позиций</td></tr>`}
+              </tbody>
+            </table>
+
+            <div class="total">
+              <div>ИТОГО</div>
+              <div>${Utils.formatPrice(total)}</div>
+            </div>
+
+            <div class="sign">
+              <div class="line"><div>Подпись продавца</div><div class="blank"></div></div>
+            </div>
+
+            ${footerNote ? `<div class="footnote">${safe(footerNote)}</div>` : ``}
+
+            <div class="printbar no-print">
+              <button class="btn" type="button" onclick="window.print()">Печать</button>
+              <button class="btn" type="button" onclick="window.close()">Закрыть</button>
+            </div>
           </div>
-          <div class="title muted">${safeTitle}</div>
-        </div>
-
-        <div class="dash"></div>
-
-        <div class="kv">
-          <div class="k">Дата</div><div class="v">${safeDate}</div>
-          <div class="k">№</div><div class="v">${safeNum}</div>
-          <div class="k">Клиент</div><div class="v">${safeName}</div>
-          ${safePhone ? `<div class="k">Телефон</div><div class="v">${safePhone}</div>` : ``}
-        </div>
-
-        <div class="dash"></div>
-
-        <table>
-          <thead>
-            <tr>
-              <th class="col-n">№</th>
-              <th class="col-name" style="text-align:left;">Товар</th>
-              <th class="col-sum">Сумма</th>
-            </tr>
-          </thead>
-          <tbody>
-            ${list}
-          </tbody>
-        </table>
-
-        <div class="dash"></div>
-
-        <div class="total">
-          <div class="label">ИТОГО</div>
-          <div class="value">${Utils.formatPrice(total || 0)}</div>
-        </div>
-
-        <div class="dash"></div>
-
-        <div class="footer muted">
-          ${safeFooter}
-        </div>
-
-        <div class="sign">
-          Подпись продавца: ____________
         </div>
       </body>
-      </html>
-        `;
+      </html>`;
   },
 
-  printReceipt(data) {
-    const html = this.buildReceiptHtml(data);
+  printReceipt(data, options = {}) {
+    const adminOnly = (options.adminOnly ?? true);
 
-    const w = window.open('', '_blank', 'width=520,height=760');
+    if (adminOnly) {
+      const isAdmin = !!window.Auth?.isAdmin?.();
+      if (!isAdmin) {
+        this.showToast('Печать чека доступна только администратору', 'info');
+        return;
+      }
+    }
+
+    // По умолчанию печатаем на A4 (чек 80мм по центру)
+    const paper = (options.paper || 'A4');
+
+    const html = this.buildReceiptHtml(data, { paper });
+
+    // Окно делаем нормального размера (а не 520x760)
+    const w = window.open('', '_blank', 'width=980,height=920,menubar=0,toolbar=0,location=0,status=0,scrollbars=1');
     if (!w) {
       this.showToast('Разрешите всплывающие окна для печати', 'warning');
       return;
@@ -822,29 +926,35 @@ const UI = {
     w.document.write(html);
     w.document.close();
 
-    const tryPrint = () => {
+    const doPrint = () => {
       try {
         w.focus();
         w.print();
         w.onafterprint = () => w.close();
       } catch (e) {
-        // если печать не удалась, окно оставим открытым
+        // если что-то пошло не так — оставим окно открытым
         console.error('printReceipt print error:', e);
       }
     };
 
-    // Даем чуть времени на подгрузку изображений/рендер
-    w.onload = () => {
-      setTimeout(tryPrint, 250);
-    };
+    // Даем чуть времени на рендер (особенно если есть logoUrl)
+    w.onload = () => setTimeout(doPrint, 250);
   },
 
   // ==========================================
   // Stats
   // ==========================================
   updateStats(stats) {
-    this.elements.statParts && this.animateNumber(this.elements.statParts, stats.totalParts || 0);
-    this.elements.statOrders && this.animateNumber(this.elements.statOrders, stats.completedOrders || 0);
+    if (this.elements.statParts) this.animateNumber(this.elements.statParts, stats.totalParts || 0);
+
+    if (this.elements.statOrders) {
+      const cars = stats.totalCars ?? 0;
+      this.animateNumber(this.elements.statOrders, cars);
+
+      const card = this.elements.statOrders.closest('.stat-card');
+      const label = card?.querySelector('.stat-card__label');
+      if (label && label.textContent !== 'Авто в разборе') label.textContent = 'Авто в разборе';
+    }
   },
 
   animateNumber(element, target) {

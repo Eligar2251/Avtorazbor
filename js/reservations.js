@@ -1,9 +1,10 @@
 /**
- * Reservations.js - Корзина и бронирование
- * Исправления:
- * - loadUserOrders() больше не использует orderBy (не требует индекса)
- * - сортировка заказов делается на клиенте
- * - защита от двойных обработчиков и повторного checkout
+ * Reservations.js - Корзина и бронирование (QTY UPDATE)
+ * - Корзина поддерживает qty (несколько штук одного productId)
+ * - validateCart ограничивает qty по stock
+ * - commitCheckout списывает stock на qty (транзакция)
+ * - cancelUserOrder: возвращает stock на qty и удаляет документ orders/{id}
+ * - чек пользователю НЕ печатается
  */
 
 const Reservations = {
@@ -30,6 +31,8 @@ const Reservations = {
 
   loadCart() {
     this.cart = Utils.loadFromStorage(this.CART_STORAGE_KEY, []);
+    // нормализуем qty
+    this.cart = (this.cart || []).map(i => ({ ...i, qty: Math.max(1, parseInt(i.qty, 10) || 1) }));
     this.validateCart();
   },
 
@@ -38,6 +41,28 @@ const Reservations = {
     this.updateCartUI();
   },
 
+  getCartCount() {
+    // badge = общее кол-во штук
+    return this.cart.reduce((s, i) => s + (parseInt(i.qty, 10) || 0), 0);
+  },
+
+  getCartTotal() {
+    return this.cart.reduce((sum, item) => {
+      const qty = Math.max(1, parseInt(item.qty, 10) || 1);
+      return sum + Utils.getPriceFinal(item) * qty;
+    }, 0);
+  },
+
+  updateCartUI() {
+    UI.updateCartCount(this.getCartCount());
+  },
+
+  /**
+   * Подтягивает актуальные данные товаров из inventory
+   * - удаляет то, чего нет или stock=0
+   * - обновляет цены/скидки/картинки/названия
+   * - qty ограничивает по stock
+   */
   async validateCart() {
     if (!this.cart.length) return;
 
@@ -45,24 +70,35 @@ const Reservations = {
       const db = firebase.firestore();
       const validItems = [];
 
+      let qtyReduced = 0;
+
       for (const item of this.cart) {
         const doc = await db.collection('inventory').doc(item.productId).get();
         if (!doc.exists) continue;
 
         const data = doc.data();
-        if ((data.stock || 0) <= 0) continue;
+        const stock = Number(data.stock || 0);
+        if (stock <= 0) continue;
 
         const priceOriginal = Number(data.price || 0);
         const discountPercent = Number(data.discountPercent || 0);
         const priceFinal = Utils.getPriceFinal({ priceOriginal, discountPercent });
 
+        let qty = Math.max(1, parseInt(item.qty, 10) || 1);
+        if (qty > stock) {
+          qtyReduced += (qty - stock);
+          qty = stock; // ограничили
+        }
+        if (qty <= 0) continue;
+
         validItems.push({
           ...item,
 
-          // ✅ подтягиваем актуальные данные
+          // актуальные поля товара
           partName: data.partName ?? item.partName,
           customTitle: data.customTitle ?? item.customTitle ?? '',
 
+          carId: data.carId ?? item.carId ?? null,
           carMake: data.carMake ?? item.carMake,
           carModel: data.carModel ?? item.carModel,
           year: data.year ?? item.year ?? null,
@@ -75,7 +111,9 @@ const Reservations = {
           discountPercent,
           priceFinal,
 
-          stock: data.stock,
+          stock,
+          qty,
+
           imageUrl: data.imageUrl || item.imageUrl || ''
         });
       }
@@ -88,6 +126,10 @@ const Reservations = {
         );
       }
 
+      if (qtyReduced > 0) {
+        UI.showToast(`Количество уменьшено по наличию: -${qtyReduced} шт.`, 'warning');
+      }
+
       this.cart = validItems;
       this.saveCart();
     } catch (e) {
@@ -95,7 +137,7 @@ const Reservations = {
     }
   },
 
-  addToCart(product) {
+  addToCart(product, addQty = 1) {
     if (!Auth.isAuthenticated()) {
       UI.openModal('authModal');
       UI.showToast('Войдите, чтобы добавить товар', 'info');
@@ -107,13 +149,28 @@ const Reservations = {
       return;
     }
 
-    if ((product.stock || 0) <= 0) {
+    const available = Number(product.stock || 0);
+    if (available <= 0) {
       UI.showToast('Товар закончился', 'error');
       return;
     }
 
-    if (this.cart.some(i => i.productId === product.id)) {
-      UI.showToast('Товар уже в корзине', 'warning');
+    const qtyToAdd = Math.max(1, parseInt(addQty, 10) || 1);
+
+    const existing = this.cart.find(i => i.productId === product.id);
+    if (existing) {
+      const currentQty = Math.max(1, parseInt(existing.qty, 10) || 1);
+      const newQty = currentQty + qtyToAdd;
+
+      if (newQty > (existing.stock || available)) {
+        UI.showToast('Недостаточно товара на складе', 'warning');
+        return;
+      }
+
+      existing.qty = newQty;
+      this.saveCart();
+      UI.showToast('Количество увеличено', 'success');
+      UI.closeModal('productModal');
       return;
     }
 
@@ -121,24 +178,29 @@ const Reservations = {
     const discountPercent = Utils.getDiscountPercent(product);
     const priceFinal = Utils.getPriceFinal({ priceOriginal, discountPercent });
 
+    const qty = Math.min(qtyToAdd, available);
+
     this.cart.push({
       productId: product.id,
+      carId: product.carId || null,
 
       partName: product.partName,
       customTitle: product.customTitle || '',
 
       carMake: product.carMake,
       carModel: product.carModel,
-      year: product.year,
+      year: product.year ?? null,
       bodyType: product.bodyType,
       restyling: !!product.restyling,
 
       condition: product.condition,
 
-      // ✅ цены
       priceOriginal,
       discountPercent,
       priceFinal,
+
+      stock: available,
+      qty,
 
       imageUrl: product.imageUrl || '',
       addedAt: new Date().toISOString()
@@ -147,6 +209,29 @@ const Reservations = {
     this.saveCart();
     UI.showToast('Товар добавлен в корзину', 'success');
     UI.closeModal('productModal');
+  },
+
+  changeQty(productId, newQty) {
+    const item = this.cart.find(i => i.productId === productId);
+    if (!item) return;
+
+    const maxStock = Number(item.stock || 0);
+    let qty = parseInt(newQty, 10);
+    if (!Number.isFinite(qty)) qty = 1;
+
+    if (qty <= 0) {
+      this.removeFromCart(productId);
+      return;
+    }
+
+    if (maxStock > 0 && qty > maxStock) {
+      UI.showToast(`Максимум доступно: ${maxStock} шт.`, 'warning');
+      qty = maxStock;
+    }
+
+    item.qty = qty;
+    this.saveCart();
+    this.renderCartItems();
   },
 
   removeFromCart(productId) {
@@ -160,18 +245,6 @@ const Reservations = {
     this.cart = [];
     this.saveCart();
     this.renderCartItems();
-  },
-
-  getCartCount() {
-    return this.cart.length;
-  },
-
-  getCartTotal() {
-    return this.cart.reduce((sum, item) => sum + Utils.getPriceFinal(item), 0);
-  },
-
-  updateCartUI() {
-    UI.updateCartCount(this.getCartCount());
   },
 
   openCart() {
@@ -206,18 +279,45 @@ const Reservations = {
       const final = Utils.getPriceFinal(item);
       const disc = Utils.getDiscountPercent(item);
 
+      const qty = Math.max(1, parseInt(item.qty, 10) || 1);
+      const stock = Number(item.stock || 0);
+
       const priceHtml = (disc > 0 && final < original)
         ? `<span class="price-old">${Utils.formatPrice(original)}</span> <span class="price-new">${Utils.formatPrice(final)}</span>`
         : `<span class="price-new">${Utils.formatPrice(final)}</span>`;
 
+      const lineTotal = final * qty;
+
       return `
         <div class="cart-item" data-product-id="${item.productId}">
           <img src="${imageUrl}" alt="" class="cart-item__image">
+
           <div class="cart-item__info">
             <div class="cart-item__name">${Utils.escapeHtml(title)}</div>
             <div class="cart-item__car muted">${Utils.escapeHtml(item.carMake)} ${Utils.escapeHtml(item.carModel)}</div>
-            <div class="cart-item__price">${priceHtml}</div>
+
+            <div class="cart-item__price">
+              ${priceHtml}
+              <span class="muted" style="margin-left:8px;">× ${qty} = <strong>${Utils.formatPrice(lineTotal)}</strong></span>
+            </div>
+
+            <div class="cart-item__qty" style="display:flex;align-items:center;gap:8px;margin-top:8px;flex-wrap:wrap;">
+              <button class="btn btn--sm btn--secondary" type="button"
+                onclick="Reservations.changeQty('${item.productId}', ${qty - 1})"
+                ${qty <= 1 ? 'disabled' : ''}>−</button>
+
+              <input class="form-input" type="number" min="1" ${stock > 0 ? `max="${stock}"` : ''} value="${qty}"
+                style="width:90px;"
+                onchange="Reservations.changeQty('${item.productId}', this.value)">
+
+              <button class="btn btn--sm btn--secondary" type="button"
+                onclick="Reservations.changeQty('${item.productId}', ${qty + 1})"
+                ${stock > 0 && qty >= stock ? 'disabled' : ''}>+</button>
+
+              ${stock > 0 ? `<span class="muted" style="font-size:12px;">Доступно: ${stock}</span>` : ''}
+            </div>
           </div>
+
           <button class="cart-item__remove" type="button" onclick="Reservations.removeFromCart('${item.productId}')">✕</button>
         </div>
       `;
@@ -248,6 +348,11 @@ const Reservations = {
     UI.openModal('checkoutModal');
   },
 
+  /**
+   * Оформление брони:
+   * - телефон обязателен
+   * - списываем stock на qty (транзакция)
+   */
   async commitCheckout() {
     if (this._checkoutInProgress) return;
     this._checkoutInProgress = true;
@@ -267,10 +372,8 @@ const Reservations = {
         return;
       }
 
-      // ✅ телефон обязателен
       const phoneRaw = document.getElementById('checkoutPhone')?.value || '';
       const userPhone = Utils.normalizePhone(phoneRaw);
-
       if (!userPhone) {
         UI.showToast('Введите корректный телефон (+7XXXXXXXXXX)', 'error');
         document.getElementById('checkoutPhone')?.focus();
@@ -288,64 +391,82 @@ const Reservations = {
       const orderRef = db.collection('orders').doc();
       const orderNumber = Utils.generateOrderNumber();
 
-      // ✅ Снимок позиций с финальной ценой
-      const itemsSnapshot = this.cart.map(i => {
-        const priceOriginal = Utils.getPriceOriginal(i);
-        const discountPercent = Utils.getDiscountPercent(i);
-        const priceFinal = Utils.getPriceFinal({ priceOriginal, discountPercent });
+      // уникальные позиции корзины: [{productId, qty}]
+      const cartSnapshot = this.cart.map(i => ({
+        productId: i.productId,
+        qty: Math.max(1, parseInt(i.qty, 10) || 1)
+      }));
 
-        return {
-          productId: i.productId,
-
-          // для отображения/чеков
-          title: Utils.getProductTitle(i),
-          partName: i.partName,
-          customTitle: i.customTitle || '',
-
-          carMake: i.carMake,
-          carModel: i.carModel,
-          year: i.year ?? null,
-          bodyType: i.bodyType,
-          restyling: !!i.restyling,
-          condition: i.condition,
-
-          priceOriginal,
-          discountPercent,
-          priceFinal
-        };
-      });
-
-      const total = itemsSnapshot.reduce((s, x) => s + (x.priceFinal || 0), 0);
+      let itemsSnapshot = [];
+      let total = 0;
 
       await db.runTransaction(async (tx) => {
-        // 1) чтения
+        // reads
         const reads = [];
-        for (const item of itemsSnapshot) {
+        for (const item of cartSnapshot) {
           const ref = db.collection('inventory').doc(item.productId);
           const snap = await tx.get(ref);
           reads.push({ item, ref, snap });
         }
 
-        // 2) валидация
+        // validate
         for (const { item, snap } of reads) {
-          if (!snap.exists) throw new Error(`Товар не найден: ${item.title || item.partName}`);
-          const stock = snap.data().stock || 0;
-          if (stock <= 0) throw new Error(`Товар закончился: ${item.title || item.partName}`);
+          if (!snap.exists) throw new Error('Один из товаров удалён');
+          const stock = Number(snap.data().stock || 0);
+          if (stock < item.qty) throw new Error('Недостаточно товара на складе для одной из позиций');
         }
 
-        // 3) списание
-        for (const { ref, snap } of reads) {
-          const currentStock = snap.data().stock || 0;
-          tx.update(ref, { stock: currentStock - 1 });
+        // snapshot items from DB + qty
+        itemsSnapshot = reads.map(({ item, snap }) => {
+          const data = snap.data() || {};
+          const priceOriginal = Number(data.price || 0);
+          const discountPercent = Number(data.discountPercent || 0);
+          const priceFinal = Utils.getPriceFinal({ priceOriginal, discountPercent });
+
+          const title = Utils.getProductTitle({
+            partName: data.partName,
+            customTitle: data.customTitle,
+            carMake: data.carMake,
+            carModel: data.carModel
+          });
+
+          return {
+            productId: item.productId,
+            qty: item.qty,
+
+            title,
+            partName: data.partName || '',
+            customTitle: data.customTitle || '',
+
+            carId: data.carId || null,
+            carMake: data.carMake || '',
+            carModel: data.carModel || '',
+            year: data.year ?? null,
+            bodyType: data.bodyType || '',
+            restyling: !!data.restyling,
+            condition: data.condition || 'used',
+
+            priceOriginal,
+            discountPercent,
+            priceFinal
+          };
+        });
+
+        total = itemsSnapshot.reduce((s, x) => s + (x.priceFinal || 0) * (x.qty || 1), 0);
+
+        // write: stock -= qty
+        for (const { item, ref, snap } of reads) {
+          const currentStock = Number(snap.data().stock || 0);
+          tx.update(ref, { stock: currentStock - item.qty });
         }
 
-        // заказ
+        // create order
         tx.set(orderRef, {
           orderNumber,
           userId: user.uid,
           userEmail: user.email,
           userName,
-          userPhone, // ✅ сохраняем телефон
+          userPhone,
 
           items: itemsSnapshot,
           total,
@@ -356,40 +477,13 @@ const Reservations = {
         });
       });
 
-      // успех
       this.clearCart();
       UI.closeModal('checkoutModal');
 
-      UI.renderBookingResult({
-        orderNumber,
-        userName,
-        items: itemsSnapshot,
-        total
-      });
+      UI.renderBookingResult({ orderNumber, userName, items: itemsSnapshot, total });
       UI.openModal('bookingResultModal');
 
-      // печать: финальные цены
-      UI.printReceipt({
-        title: 'Чек бронирования',
-        orderNumber,
-        userName,
-        userPhone, // ✅ добавили телефон в чек
-        items: itemsSnapshot.map(x => ({
-          partName: x.title || x.partName,
-          qty: 1,
-          priceFinal: x.priceFinal || 0,
-          priceOriginal: x.priceOriginal || x.priceFinal || 0,
-          discountPercent: x.discountPercent || 0
-        })),
-        total,
-        date: Utils.formatDate(new Date(), true),
-
-        // опционально:
-        companyName: 'AutoParts',
-        // logoUrl: 'https://.../logo.png',
-        footerNote: 'Бронь создана. Пожалуйста, дождитесь подтверждения.'
-      });
-
+      // чек пользователю не печатаем
       UI.showToast(`Бронь оформлена: #${orderNumber}`, 'success');
 
       if (!document.getElementById('profileSection')?.classList.contains('hidden')) {
@@ -409,7 +503,7 @@ const Reservations = {
   },
 
   // -------------------------------
-  // FIX: без orderBy -> без индекса
+  // Orders (profile)
   // -------------------------------
   async loadUserOrders() {
     const container = document.getElementById('userOrders');
@@ -424,16 +518,17 @@ const Reservations = {
     container.innerHTML = '<div class="loading-state"><div class="spinner"></div></div>';
 
     try {
-      // ВАЖНО: без orderBy, иначе нужен индекс
       const snapshot = await firebase.firestore()
         .collection('orders')
         .where('userId', '==', user.uid)
         .limit(200)
         .get();
 
-      const orders = snapshot.docs.map(doc => ({ id: doc.id, ...doc.data() }));
+      let orders = snapshot.docs.map(doc => ({ id: doc.id, ...doc.data() }));
 
-      // сортируем на клиенте по date/createdAt
+      // показываем только актуальные (остальные удаляются при отмене/продаже)
+      orders = orders.filter(o => ['active', 'confirmed', 'ready'].includes(o.status));
+
       orders.sort((a, b) => {
         const aMs = (a.date?.toMillis?.() || a.createdAt?.toMillis?.() || 0);
         const bMs = (b.date?.toMillis?.() || b.createdAt?.toMillis?.() || 0);
@@ -456,7 +551,7 @@ const Reservations = {
     if (!orders.length) {
       container.innerHTML = `
         <div class="empty-state" style="padding: 2rem;">
-          <p>У вас пока нет заказов</p>
+          <p>У вас пока нет активных бронирований</p>
           <button class="btn btn--primary" type="button" data-navigate="catalog" style="margin-top: 1rem;">
             Перейти в каталог
           </button>
@@ -471,7 +566,7 @@ const Reservations = {
 
     container.innerHTML = orders.map(order => {
       const statusInfo = Config.orderStatuses[order.status] || { label: order.status, class: 'active' };
-      const total = (order.items || []).reduce((sum, item) => sum + (item.priceFinal ?? item.price ?? 0), 0);
+      const total = (order.items || []).reduce((sum, item) => sum + (item.priceFinal ?? item.price ?? 0) * (item.qty || 1), 0);
 
       return `
         <div class="order-card">
@@ -486,7 +581,7 @@ const Reservations = {
           <div class="order-card__items">
             ${(order.items || []).map(item => `
               <div class="order-item">
-                <span>${Utils.escapeHtml(item.title || item.customTitle || item.partName)}</span>
+                <span>${Utils.escapeHtml(item.title || item.customTitle || item.partName)} <span class="muted">×${item.qty || 1}</span></span>
                 <span>${Utils.formatPrice(item.priceFinal ?? item.price ?? 0)}</span>
               </div>
             `).join('')}
@@ -509,6 +604,11 @@ const Reservations = {
     }).join('');
   },
 
+  /**
+   * Отмена пользователя:
+   * - вернуть stock (на qty)
+   * - удалить orders/{id}
+   */
   async cancelUserOrder(orderId) {
     const confirmed = await UI.confirm('Отмена бронирования', 'Вы уверены, что хотите отменить бронирование?');
     if (!confirmed) return;
@@ -536,21 +636,16 @@ const Reservations = {
 
       const batch = db.batch();
 
-      batch.update(db.collection('orders').doc(orderId), {
-        status: 'cancelled',
-        cancelledAt: firebase.firestore.FieldValue.serverTimestamp(),
-        cancelledBy: 'user',
-        updatedAt: firebase.firestore.FieldValue.serverTimestamp()
-      });
-
       for (const item of (order.items || [])) {
         if (item.productId) {
+          const qty = Math.max(1, parseInt(item.qty, 10) || 1);
           batch.update(db.collection('inventory').doc(item.productId), {
-            stock: firebase.firestore.FieldValue.increment(1)
+            stock: firebase.firestore.FieldValue.increment(qty)
           });
         }
       }
 
+      batch.delete(db.collection('orders').doc(orderId));
       await batch.commit();
 
       UI.showToast('Бронирование отменено', 'success');

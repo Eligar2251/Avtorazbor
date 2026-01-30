@@ -1,5 +1,8 @@
 /**
- * Utils.js - утилиты
+ * Utils.js - утилиты (UPDATED)
+ * Важные изменения:
+ * - createInventoryKey теперь учитывает carId (если есть) => ключ уникален для конкретной машины
+ * - добавлены getProductTitle, скидки (priceFinal), телефон (mask/normalize)
  */
 
 const Utils = {
@@ -12,104 +15,6 @@ const Utils = {
       minimumFractionDigits: 0,
       maximumFractionDigits: 0
     }).format(n);
-  },
-
-  getProductTitle(product) {
-    const custom = String(product?.customTitle || '').trim();
-    if (custom) return custom;
-
-    const part = String(product?.partName || '').trim();
-    const make = String(product?.carMake || '').trim();
-    const model = String(product?.carModel || '').trim();
-
-    // ✅ ГОД НЕ ИСПОЛЬЗУЕМ
-    return [part, make, model].filter(Boolean).join(' ').trim();
-  },
-
-  // скидка
-  clampDiscountPercent(percent) {
-    const n = Number(percent);
-    if (!Number.isFinite(n)) return 0;
-    return Math.min(100, Math.max(0, Math.round(n)));
-  },
-
-  getDiscountPercent(obj) {
-    return this.clampDiscountPercent(obj?.discountPercent ?? 0);
-  },
-
-  getPriceOriginal(obj) {
-    const n = Number(obj?.priceOriginal ?? obj?.price ?? 0);
-    return Number.isFinite(n) ? n : 0;
-  },
-
-  getPriceFinal(obj) {
-    // если уже есть priceFinal (например, в корзине/заказе) — используем
-    const pf = Number(obj?.priceFinal);
-    if (Number.isFinite(pf) && pf >= 0) return Math.round(pf);
-
-    const price = this.getPriceOriginal(obj);
-    const d = this.getDiscountPercent(obj);
-
-    if (price <= 0) return 0;
-    if (d <= 0) return Math.round(price);
-
-    const final = price * (1 - d / 100);
-    return Math.max(0, Math.round(final));
-  },
-
-  maskPhoneInput(inputEl) {
-    if (!inputEl) return;
-
-    let digits = String(inputEl.value || '').replace(/\D/g, '');
-
-    // Разрешаем ввод 10-11 цифр, но приводим к формату РФ
-    // Если ввели 8XXXXXXXXXX -> заменяем на 7XXXXXXXXXX
-    if (digits.startsWith('8')) digits = '7' + digits.slice(1);
-
-    // Если ввели 9XXXXXXXXX (10 цифр без кода) -> добавим 7 в начало
-    if (digits.length === 10) digits = '7' + digits;
-
-    // Если совсем пусто — очищаем
-    if (!digits.length) {
-      inputEl.value = '';
-      return;
-    }
-
-    // Если первая цифра не 7 — принудительно делаем 7
-    if (!digits.startsWith('7')) digits = '7' + digits.replace(/^7+/, '').slice(0);
-
-    digits = digits.slice(0, 11); // 7 + 10 цифр
-
-    const p = digits.slice(1); // 10 цифр после 7
-
-    let out = '+7';
-    if (p.length > 0) out += ' (' + p.slice(0, 3);
-    if (p.length >= 3) out += ') ' + p.slice(3, 6);
-    if (p.length >= 6) out += '-' + p.slice(6, 8);
-    if (p.length >= 8) out += '-' + p.slice(8, 10);
-
-    inputEl.value = out;
-  },
-
-  // телефон
-  normalizePhone(input) {
-    const digits = String(input || '').replace(/\D/g, '');
-    if (!digits) return null;
-
-    let d = digits;
-
-    // 8XXXXXXXXXX -> 7XXXXXXXXXX
-    if (d.startsWith('8') && d.length === 11) d = '7' + d.slice(1);
-
-    // 10 цифр без кода -> добавим 7
-    if (d.length === 10) d = '7' + d;
-
-    // Должно быть 11 цифр и начинаться с 7
-    if (d.length !== 11) return null;
-    if (!d.startsWith('7')) return null;
-
-    // +7XXXXXXXXXX
-    return '+' + d;
   },
 
   formatDate(date, includeTime = false) {
@@ -237,8 +142,125 @@ const Utils = {
     return parts.join(' ');
   },
 
+  /**
+   * Заголовок товара:
+   * - если customTitle заполнено => оно
+   * - иначе: partName + make + model (без года)
+   */
+  getProductTitle(product) {
+    const custom = String(product?.customTitle || '').trim();
+    if (custom) return custom;
+
+    const part = String(product?.partName || '').trim();
+    const make = String(product?.carMake || '').trim();
+    const model = String(product?.carModel || '').trim();
+
+    return [part, make, model].filter(Boolean).join(' ').trim();
+  },
+
+  // =========================
+  // Discounts / prices
+  // =========================
+  clampDiscountPercent(percent) {
+    const n = Number(percent);
+    if (!Number.isFinite(n)) return 0;
+    return Math.min(100, Math.max(0, Math.round(n)));
+  },
+
+  getDiscountPercent(obj) {
+    return this.clampDiscountPercent(obj?.discountPercent ?? 0);
+  },
+
+  getPriceOriginal(obj) {
+    const n = Number(obj?.priceOriginal ?? obj?.price ?? 0);
+    return Number.isFinite(n) ? n : 0;
+  },
+
+  getPriceFinal(obj) {
+    // если уже есть priceFinal (корзина/заказ) — используем
+    const pf = Number(obj?.priceFinal);
+    if (Number.isFinite(pf) && pf >= 0) return Math.round(pf);
+
+    const price = this.getPriceOriginal(obj);
+    const d = this.getDiscountPercent(obj);
+
+    if (price <= 0) return 0;
+    if (d <= 0) return Math.round(price);
+
+    return Math.max(0, Math.round(price * (1 - d / 100)));
+  },
+
+  // =========================
+  // Phone (checkout)
+  // =========================
+  maskPhoneInput(inputEl) {
+    if (!inputEl) return;
+
+    let digits = String(inputEl.value || '').replace(/\D/g, '');
+
+    if (digits.startsWith('8')) digits = '7' + digits.slice(1);
+    if (digits.length === 10) digits = '7' + digits;
+
+    if (!digits.length) {
+      inputEl.value = '';
+      return;
+    }
+
+    if (!digits.startsWith('7')) digits = '7' + digits.replace(/^7+/, '');
+    digits = digits.slice(0, 11);
+
+    const p = digits.slice(1);
+
+    let out = '+7';
+    if (p.length > 0) out += ' (' + p.slice(0, 3);
+    if (p.length >= 3) out += ') ' + p.slice(3, 6);
+    if (p.length >= 6) out += '-' + p.slice(6, 8);
+    if (p.length >= 8) out += '-' + p.slice(8, 10);
+
+    inputEl.value = out;
+  },
+
+  normalizePhone(input) {
+    const digits = String(input || '').replace(/\D/g, '');
+    if (!digits) return null;
+
+    let d = digits;
+
+    if (d.startsWith('8') && d.length === 11) d = '7' + d.slice(1);
+    if (d.length === 10) d = '7' + d;
+
+    if (d.length !== 11) return null;
+    if (!d.startsWith('7')) return null;
+
+    return '+' + d;
+  },
+
+  /**
+   * carKey для коллекции cars (инфо о машине)
+   * Год может быть null => пустая строка, чтобы не было "null".
+   */
+  createCarKey(car) {
+    const make = String(car?.carMake || '').trim();
+    const model = String(car?.carModel || '').trim();
+    const year = (car?.year == null || car?.year === '') ? '' : String(car.year).trim();
+    const body = String(car?.bodyType || '').trim();
+    const rest = car?.restyling ? '1' : '0';
+    return [make, model, year, body, rest].join('|').toLowerCase();
+  },
+
+  /**
+   * NEW: inventoryKey теперь привязан к carId (это решает смешивание разных машин)
+   * - Если есть carId: `${carId}|${partName}|${condition}`
+   * - Иначе (legacy fallback): `${make}|${model}|${year}|${body}|${part}|${condition}`
+   */
   createInventoryKey(item) {
-    const norm = (v) => (v == null ? '' : String(v).trim());
+    const norm = (v) => (v == null ? '' : String(v).trim().toLowerCase());
+
+    if (item?.carId) {
+      return [norm(item.carId), norm(item.partName), norm(item.condition)].join('|');
+    }
+
+    // legacy fallback
     return [
       norm(item.carMake),
       norm(item.carModel),
@@ -246,7 +268,7 @@ const Utils = {
       norm(item.bodyType),
       norm(item.partName),
       norm(item.condition)
-    ].join('|').toLowerCase();
+    ].join('|');
   }
 };
 
