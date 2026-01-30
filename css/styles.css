@@ -2034,3 +2034,28 @@ ul, ol { list-style: none; }
     height: 44px;
   }
 }
+
+/* =========================================================
+   FIX: На карточке товара "В наличии" всегда снизу
+   (когда есть скидка, цена переносится и ломает строку)
+   ========================================================= */
+.product-card__footer {
+  display: flex !important;
+  flex-direction: column !important;
+  align-items: stretch !important;
+  gap: 6px !important;
+}
+
+/* Цена может переноситься, но не должна "толкать" наличие */
+.product-card__price {
+  display: flex !important;
+  flex-wrap: wrap !important;
+  gap: 6px 10px !important;
+  align-items: baseline !important;
+}
+
+/* Наличие всегда на нижней строке */
+.product-card__stock {
+  align-self: flex-end !important;
+  white-space: nowrap !important;
+}
