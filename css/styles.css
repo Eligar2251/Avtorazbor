@@ -2088,84 +2088,83 @@ ul, ol { list-style: none; }
 }
 
 /* =========================================================
-   DISCOUNT RIBBON (product cards)
-   - shows "-XX%" + "Скидка" as corner ribbon
+   DISCOUNT BADGE (CIRCLE) — small, only "-15%"
+   Uses existing markup:
+   .product-card__ribbon
+   .product-card__ribbon-strip
+   .product-card__ribbon-value
+   .product-card__ribbon-text (hidden)
    ========================================================= */
 
-.product-card--discount {
-  border-color: rgba(255, 77, 45, 0.22);
-}
-
-.product-card--discount:hover {
-  border-color: rgba(255, 77, 45, 0.32);
-}
-
-/* Corner container (keeps everything inside card even with overflow hidden) */
 .product-card__ribbon {
-  position: absolute;
-  top: 0;
-  right: 0;
-  width: 96px;
-  height: 96px;
-  overflow: hidden;
-  z-index: 3;
-  pointer-events: none;
+  position: absolute !important;
+  top: 10px !important;
+  right: 10px !important;
+  width: auto !important;
+  height: auto !important;
+  overflow: visible !important;
+  pointer-events: none !important;
+  z-index: 4 !important;
 }
 
-/* Rotated strip */
+/* круг */
 .product-card__ribbon-strip {
-  position: absolute;
-  top: 18px;
-  right: -46px;
-  width: 170px;
-  padding: 8px 0;
+  width: 44px !important;
+  height: 44px !important;
+  border-radius: 9999px !important;
 
-  background: var(--accent-grad);
-  color: #fff;
+  display: grid !important;
+  place-items: center !important;
 
-  text-align: center;
-  transform: rotate(45deg);
+  padding: 0 !important;
+  gap: 0 !important;
 
-  box-shadow: 0 10px 22px rgba(255, 77, 45, 0.22);
-  border: 1px solid rgba(255, 255, 255, 0.22);
+  background: var(--accent-grad) !important;
+  border: 1px solid rgba(255, 255, 255, 0.22) !important;
+
+  /* без "шлейфа" — тень максимально мягкая и без размытого хвоста */
+  box-shadow: 0 2px 0 rgba(2, 6, 23, 0.10) !important;
+
+  transform: none !important;
+  clip-path: none !important;
+  filter: none !important;
 }
 
-/* Value + label */
+/* только процент */
 .product-card__ribbon-value {
-  font-weight: 980;
-  font-size: 13px;
-  line-height: 1.0;
-  letter-spacing: -0.01em;
+  position: static !important;
+  transform: none !important;
+
+  font-weight: 980 !important;
+  font-size: 12px !important;
+  line-height: 1 !important;
+  letter-spacing: -0.02em !important;
+
+  color: #fff !important;
+  white-space: nowrap !important;
+  text-align: center !important;
 }
 
+/* скрываем надпись "Скидка" */
 .product-card__ribbon-text {
-  margin-top: 2px;
-  font-weight: 950;
-  font-size: 10px;
-  line-height: 1.0;
-  letter-spacing: 0.10em;
-  text-transform: uppercase;
-  opacity: 0.95;
+  display: none !important;
 }
 
-/* Optional: small “fold” feel */
-.product-card__ribbon-strip::before,
-.product-card__ribbon-strip::after {
-  content: "";
-  position: absolute;
-  top: 100%;
-  width: 10px;
-  height: 10px;
-  background: rgba(0,0,0,0.10);
-  filter: blur(0.2px);
+/* чуть подсветим скидочную карточку аккуратно */
+.product-card--discount {
+  border-color: rgba(255, 77, 45, 0.22) !important;
+}
+.product-card--discount:hover {
+  border-color: rgba(255, 77, 45, 0.34) !important;
 }
 
-.product-card__ribbon-strip::before {
-  left: 0;
-  clip-path: polygon(0 0, 100% 0, 0 100%);
-}
-
-.product-card__ribbon-strip::after {
-  right: 0;
-  clip-path: polygon(0 0, 100% 0, 100% 100%);
+/* на очень маленьких экранах ещё компактнее */
+@media (max-width: 420px) {
+  .product-card__ribbon-strip {
+    width: 40px !important;
+    height: 40px !important;
+  }
+  .product-card__ribbon-value {
+    font-size: 11px !important;
+  }
 }
