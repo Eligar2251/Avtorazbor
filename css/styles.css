@@ -2059,3 +2059,113 @@ ul, ol { list-style: none; }
   align-self: flex-end !important;
   white-space: nowrap !important;
 }
+
+/* =========================================================
+   FIX: Цена справа + "В наличии" всегда снизу справа
+   ========================================================= */
+.product-card__footer {
+  display: flex !important;
+  flex-direction: column !important;
+  align-items: flex-end !important;   /* всё прижимаем вправо */
+  gap: 6px !important;
+}
+
+/* Цена (в т.ч. со скидкой) переносится, но остаётся справа */
+.product-card__price {
+  display: flex !important;
+  flex-wrap: wrap !important;
+  justify-content: flex-end !important;
+  align-items: baseline !important;
+  gap: 6px 10px !important;
+  width: 100% !important;            /* чтобы правое выравнивание работало стабильно */
+  text-align: right !important;
+}
+
+/* Наличие всегда отдельной строкой снизу справа */
+.product-card__stock {
+  align-self: flex-end !important;
+  white-space: nowrap !important;
+}
+
+/* =========================================================
+   DISCOUNT RIBBON (product cards)
+   - shows "-XX%" + "Скидка" as corner ribbon
+   ========================================================= */
+
+.product-card--discount {
+  border-color: rgba(255, 77, 45, 0.22);
+}
+
+.product-card--discount:hover {
+  border-color: rgba(255, 77, 45, 0.32);
+}
+
+/* Corner container (keeps everything inside card even with overflow hidden) */
+.product-card__ribbon {
+  position: absolute;
+  top: 0;
+  right: 0;
+  width: 96px;
+  height: 96px;
+  overflow: hidden;
+  z-index: 3;
+  pointer-events: none;
+}
+
+/* Rotated strip */
+.product-card__ribbon-strip {
+  position: absolute;
+  top: 18px;
+  right: -46px;
+  width: 170px;
+  padding: 8px 0;
+
+  background: var(--accent-grad);
+  color: #fff;
+
+  text-align: center;
+  transform: rotate(45deg);
+
+  box-shadow: 0 10px 22px rgba(255, 77, 45, 0.22);
+  border: 1px solid rgba(255, 255, 255, 0.22);
+}
+
+/* Value + label */
+.product-card__ribbon-value {
+  font-weight: 980;
+  font-size: 13px;
+  line-height: 1.0;
+  letter-spacing: -0.01em;
+}
+
+.product-card__ribbon-text {
+  margin-top: 2px;
+  font-weight: 950;
+  font-size: 10px;
+  line-height: 1.0;
+  letter-spacing: 0.10em;
+  text-transform: uppercase;
+  opacity: 0.95;
+}
+
+/* Optional: small “fold” feel */
+.product-card__ribbon-strip::before,
+.product-card__ribbon-strip::after {
+  content: "";
+  position: absolute;
+  top: 100%;
+  width: 10px;
+  height: 10px;
+  background: rgba(0,0,0,0.10);
+  filter: blur(0.2px);
+}
+
+.product-card__ribbon-strip::before {
+  left: 0;
+  clip-path: polygon(0 0, 100% 0, 0 100%);
+}
+
+.product-card__ribbon-strip::after {
+  right: 0;
+  clip-path: polygon(0 0, 100% 0, 100% 100%);
+}

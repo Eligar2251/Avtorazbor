@@ -241,43 +241,61 @@ const UI = {
   },
 
   renderProductCard(product) {
-    const conditionClass = product.condition === 'used' ? 'product-card__badge--used' : '';
-    const conditionText = product.condition === 'new' ? 'Новое' : 'Б/У';
+  const conditionClass = product.condition === 'used' ? 'product-card__badge--used' : '';
+  const conditionText = product.condition === 'new' ? 'Новое' : 'Б/У';
 
-    const stock = product.stock || 0;
-    const stockClass = stock <= 2 ? 'product-card__stock--low' : '';
-    const stockText = stock <= 2 ? `Осталось: ${stock}` : `В наличии: ${stock}`;
+  const stock = product.stock || 0;
+  const stockClass = stock <= 2 ? 'product-card__stock--low' : '';
+  const stockText = stock <= 2 ? `Осталось: ${stock}` : `В наличии: ${stock}`;
 
-    const imageUrl = product.imageUrl || 'data:image/svg+xml,%3Csvg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="%236c6c80"%3E%3Cpath d="M21 19V5c0-1.1-.9-2-2-2H5c-1.1 0-2 .9-2 2v14c0 1.1.9 2 2 2h14c1.1 0 2-.9 2-2zM8.5 13.5l2.5 3.01L14.5 12l4.5 6H5l3.5-4.5z"/%3E%3C/svg%3E';
+  const imageUrl = product.imageUrl || 'data:image/svg+xml,%3Csvg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="%236c6c80"%3E%3Cpath d="M21 19V5c0-1.1-.9-2-2-2H5c-1.1 0-2 .9-2 2v14c0 1.1.9 2 2 2h14c0-1.1-.9-2-2-2zM8.5 13.5l2.5 3.01L14.5 12l4.5 6H5l3.5-4.5z"/%3E%3C/svg%3E';
 
-    const title = Utils.getProductTitle(product);
+  const title = Utils.getProductTitle(product);
 
-    const priceOriginal = Utils.getPriceOriginal(product);
-    const disc = Utils.getDiscountPercent(product);
-    const priceFinal = Utils.getPriceFinal({ priceOriginal, discountPercent: disc });
+  const priceOriginal = Utils.getPriceOriginal(product);
+  const disc = Utils.getDiscountPercent(product);
+  const priceFinal = Utils.getPriceFinal({ priceOriginal, discountPercent: disc });
 
-    const priceHtml = (disc > 0 && priceFinal < priceOriginal)
-      ? `<span class="price-old">${Utils.formatPrice(priceOriginal)}</span>
-         <span class="price-new">${Utils.formatPrice(priceFinal)}</span>`
-      : `<span class="price-new">${Utils.formatPrice(priceOriginal)}</span>`;
+  const hasDiscount = (disc > 0 && priceFinal < priceOriginal);
 
-    return `
-      <article class="product-card" data-product-id="${product.id}">
-        <div class="product-card__image">
-          <img src="${imageUrl}" alt="${Utils.escapeHtml(title)}" loading="lazy">
-          <span class="product-card__badge ${conditionClass}">${conditionText}</span>
+  const priceHtml = hasDiscount
+    ? `<span class="price-old">${Utils.formatPrice(priceOriginal)}</span>
+       <span class="price-new">${Utils.formatPrice(priceFinal)}</span>`
+    : `<span class="price-new">${Utils.formatPrice(priceOriginal)}</span>`;
+
+  const ribbonHtml = hasDiscount
+    ? `
+      <div class="product-card__ribbon" aria-label="Скидка ${disc}%">
+        <div class="product-card__ribbon-strip">
+          <div class="product-card__ribbon-value">-${disc}%</div>
+          <div class="product-card__ribbon-text">Скидка</div>
         </div>
-        <div class="product-card__content">
-          <h3 class="product-card__title">${Utils.escapeHtml(title)}</h3>
-          <p class="product-card__car">${Utils.escapeHtml(Utils.formatCarName(product))}</p>
-          <div class="product-card__footer">
-            <span class="product-card__price">${priceHtml}</span>
-            <span class="product-card__stock ${stockClass}">${stockText}</span>
-          </div>
+      </div>
+    `
+    : '';
+
+  return `
+    <article class="product-card ${hasDiscount ? 'product-card--discount' : ''}" data-product-id="${product.id}">
+      <div class="product-card__image">
+        <img src="${imageUrl}" alt="${Utils.escapeHtml(title)}" loading="lazy">
+
+        ${ribbonHtml}
+
+        <span class="product-card__badge ${conditionClass}">${conditionText}</span>
+      </div>
+
+      <div class="product-card__content">
+        <h3 class="product-card__title">${Utils.escapeHtml(title)}</h3>
+        <p class="product-card__car">${Utils.escapeHtml(Utils.formatCarName(product))}</p>
+
+        <div class="product-card__footer">
+          <span class="product-card__price">${priceHtml}</span>
+          <span class="product-card__stock ${stockClass}">${stockText}</span>
         </div>
-      </article>
-    `;
-  },
+      </div>
+    </article>
+  `;
+},
 
   renderProducts(products) {
     if (!this.elements.productsGrid) return;
