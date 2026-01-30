@@ -2056,34 +2056,7 @@ ul, ol { list-style: none; }
 
 /* Наличие всегда на нижней строке */
 .product-card__stock {
-  align-self: flex-end !important;
-  white-space: nowrap !important;
-}
-
-/* =========================================================
-   FIX: Цена справа + "В наличии" всегда снизу справа
-   ========================================================= */
-.product-card__footer {
-  display: flex !important;
-  flex-direction: column !important;
-  align-items: flex-end !important;   /* всё прижимаем вправо */
-  gap: 6px !important;
-}
-
-/* Цена (в т.ч. со скидкой) переносится, но остаётся справа */
-.product-card__price {
-  display: flex !important;
-  flex-wrap: wrap !important;
-  justify-content: flex-end !important;
-  align-items: baseline !important;
-  gap: 6px 10px !important;
-  width: 100% !important;            /* чтобы правое выравнивание работало стабильно */
-  text-align: right !important;
-}
-
-/* Наличие всегда отдельной строкой снизу справа */
-.product-card__stock {
-  align-self: flex-end !important;
+  align-self: flex-start !important;
   white-space: nowrap !important;
 }
 
