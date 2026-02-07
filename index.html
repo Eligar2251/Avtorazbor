@@ -354,6 +354,29 @@
 
                 <!-- Sales -->
                 <div class="admin-content hidden" id="tabSales">
+                    <div class="sales-toolbar" id="salesToolbar">
+                        <div class="sales-toolbar__left">
+                            <div class="sales-toolbar__field">
+                                <label class="filter-label" for="salesReportFrom">С</label>
+                                <input class="form-input" type="date" id="salesReportFrom">
+                            </div>
+
+                            <div class="sales-toolbar__field">
+                                <label class="filter-label" for="salesReportTo">По</label>
+                                <input class="form-input" type="date" id="salesReportTo">
+                            </div>
+                        </div>
+
+                        <div class="sales-toolbar__right">
+                            <button class="btn btn--secondary btn--sm" type="button" id="salesTodayBtn">Сегодня</button>
+                            <button class="btn btn--secondary btn--sm" type="button"
+                                id="salesYesterdayBtn">Вчера</button>
+                            <button class="btn btn--primary btn--sm" type="button" id="printSalesReportBtn">
+                                Печать отчёта
+                            </button>
+                        </div>
+                    </div>
+
                     <div class="sales-list" id="salesList"></div>
                 </div>
 

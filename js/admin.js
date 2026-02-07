@@ -199,6 +199,11 @@ const Admin = {
     }, 200));
     document.getElementById('carsSort')?.addEventListener('change', () => this.refreshCarsTab());
 
+    // Sales report toolbar
+    document.getElementById('salesTodayBtn')?.addEventListener('click', () => this.setSalesReportPreset('today'));
+    document.getElementById('salesYesterdayBtn')?.addEventListener('click', () => this.setSalesReportPreset('yesterday'));
+    document.getElementById('printSalesReportBtn')?.addEventListener('click', () => this.printSalesReport());
+
     // Cars tab actions delegation (buttons are in body, not in summary)
     document.getElementById('carsList')?.addEventListener('click', (e) => {
       const btn = e.target.closest('[data-car-action]');
@@ -418,6 +423,16 @@ const Admin = {
     if (tabName === 'orders') this.renderOrders();
     if (tabName === 'sales') this.renderSales();
     if (tabName === 'cars') this.refreshCarsTab();
+
+    if (tabName === 'sales') {
+      // если поля пустые — выставим сегодня
+      const fromEl = document.getElementById('salesReportFrom');
+      const toEl = document.getElementById('salesReportTo');
+      if (fromEl && toEl && (!fromEl.value || !toEl.value)) {
+        this.setSalesReportPreset('today');
+      }
+      this.renderSales();
+    }
   },
 
   // ==========================================================
@@ -1389,6 +1404,123 @@ const Admin = {
         </div>
       `;
     }).join('');
+  },
+
+  getLocalDateInputValue(d = new Date()) {
+    const dt = new Date(d);
+    const yyyy = dt.getFullYear();
+    const mm = String(dt.getMonth() + 1).padStart(2, '0');
+    const dd = String(dt.getDate()).padStart(2, '0');
+    return `${yyyy}-${mm}-${dd}`;
+  },
+
+  setSalesReportPreset(preset = 'today') {
+    const fromEl = document.getElementById('salesReportFrom');
+    const toEl = document.getElementById('salesReportTo');
+    if (!fromEl || !toEl) return;
+
+    const now = new Date();
+
+    if (preset === 'yesterday') {
+      const y = new Date(now);
+      y.setDate(now.getDate() - 1);
+      const v = this.getLocalDateInputValue(y);
+      fromEl.value = v;
+      toEl.value = v;
+      return;
+    }
+
+    // today
+    const v = this.getLocalDateInputValue(now);
+    fromEl.value = v;
+    toEl.value = v;
+  },
+
+  printSalesReport() {
+    if (!Auth.isAdmin()) {
+      UI.showToast('Доступно только администратору', 'error');
+      return;
+    }
+
+    const fromEl = document.getElementById('salesReportFrom');
+    const toEl = document.getElementById('salesReportTo');
+
+    // если даты не заполнены — ставим сегодня
+    if (!fromEl?.value || !toEl?.value) {
+      this.setSalesReportPreset('today');
+    }
+
+    const fromStr = fromEl?.value || this.getLocalDateInputValue(new Date());
+    const toStr = toEl?.value || fromStr;
+
+    // диапазон по локальному времени:
+    // from: 00:00:00.000
+    // to:   23:59:59.999
+    const from = new Date(`${fromStr}T00:00:00`);
+    const to = new Date(`${toStr}T23:59:59.999`);
+
+    const sales = (this.salesData || []).filter(s => {
+      const ts = s.completedAt || s.date || s.createdAt || null;
+      const d = ts?.toDate?.() || (ts instanceof Date ? ts : null);
+      if (!d) return false;
+      return d >= from && d <= to;
+    });
+
+    // строки отчёта = каждая позиция (item) отдельной строкой
+    const rows = [];
+    for (const sale of sales) {
+      const orderNumber = sale.orderNumber || sale.orderId?.slice(-8) || sale.id?.slice(-8) || '';
+      const userName = sale.userName || sale.userEmail || '—';
+      const userPhone = sale.userPhone || '';
+
+      const completed = sale.completedAt || sale.date || sale.createdAt || null;
+      const dateStr = Utils.formatDate(completed || new Date(), true);
+
+      const items = (sale.items || []).map(it => ({
+        ...it,
+        qty: Math.max(1, parseInt(it.qty, 10) || 1)
+      }));
+
+      for (const it of items) {
+        const unit = Number(it.priceFinal ?? it.price ?? 0);
+        const qty = Math.max(1, parseInt(it.qty, 10) || 1);
+        const line = unit * qty;
+
+        rows.push({
+          date: dateStr,
+          orderNumber,
+          userName,
+          userPhone,
+          car: Utils.formatCarName(it),
+          partName: (it.title || it.customTitle || it.partName || 'Товар'),
+          condition: (it.condition === 'new' ? 'NEW' : 'USED'),
+          unitPriceStr: Utils.formatPrice(unit),
+          qtyStr: String(qty),
+          lineTotalStr: Utils.formatPrice(line),
+          _qty: qty,
+          _line: line
+        });
+      }
+    }
+
+    // totals
+    const totals = {
+      totalSales: sales.length,
+      totalPositions: rows.length,
+      totalQty: rows.reduce((s, r) => s + (r._qty || 0), 0),
+      totalSum: rows.reduce((s, r) => s + (r._line || 0), 0)
+    };
+
+    const rangeLabel = `Период: ${fromStr} — ${toStr}`;
+
+    UI.printSalesReport({
+      companyName: Config?.receipt?.companyName || 'AutoParts',
+      title: 'Отчёт по продажам',
+      rangeLabel,
+      generatedAt: Utils.formatDate(new Date(), true),
+      rows,
+      totals
+    });
   },
 
   printSaleReceipt(saleId) {

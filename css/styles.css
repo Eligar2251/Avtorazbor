@@ -2141,3 +2141,50 @@ ul, ol { list-style: none; }
     font-size: 11px !important;
   }
 }
+
+/* =========================================================
+   Sales report toolbar (Admin -> Sales)
+   ========================================================= */
+.sales-toolbar {
+  display: flex;
+  align-items: flex-end;
+  justify-content: space-between;
+  gap: 12px;
+  flex-wrap: wrap;
+
+  padding: 12px;
+  margin-bottom: 14px;
+
+  border: 1px solid var(--border);
+  border-radius: var(--r-20);
+  background: rgba(255,255,255,0.94);
+  box-shadow: var(--sh-1);
+}
+
+.sales-toolbar__left {
+  display: flex;
+  gap: 12px;
+  flex-wrap: wrap;
+  align-items: flex-end;
+}
+
+.sales-toolbar__field {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  min-width: 180px;
+}
+
+.sales-toolbar__right {
+  display: flex;
+  gap: 10px;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: flex-end;
+}
+
+@media (max-width: 520px) {
+  .sales-toolbar__field { min-width: 150px; }
+  .sales-toolbar__right .btn { width: 100%; }
+  .sales-toolbar__right { width: 100%; }
+}

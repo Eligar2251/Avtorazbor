@@ -241,30 +241,30 @@ const UI = {
   },
 
   renderProductCard(product) {
-  const conditionClass = product.condition === 'used' ? 'product-card__badge--used' : '';
-  const conditionText = product.condition === 'new' ? 'Новое' : 'Б/У';
+    const conditionClass = product.condition === 'used' ? 'product-card__badge--used' : '';
+    const conditionText = product.condition === 'new' ? 'Новое' : 'Б/У';
 
-  const stock = product.stock || 0;
-  const stockClass = stock <= 2 ? 'product-card__stock--low' : '';
-  const stockText = stock <= 2 ? `Осталось: ${stock}` : `В наличии: ${stock}`;
+    const stock = product.stock || 0;
+    const stockClass = stock <= 2 ? 'product-card__stock--low' : '';
+    const stockText = stock <= 2 ? `Осталось: ${stock}` : `В наличии: ${stock}`;
 
-  const imageUrl = product.imageUrl || 'data:image/svg+xml,%3Csvg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="%236c6c80"%3E%3Cpath d="M21 19V5c0-1.1-.9-2-2-2H5c-1.1 0-2 .9-2 2v14c0 1.1.9 2 2 2h14c0-1.1-.9-2-2-2zM8.5 13.5l2.5 3.01L14.5 12l4.5 6H5l3.5-4.5z"/%3E%3C/svg%3E';
+    const imageUrl = product.imageUrl || 'data:image/svg+xml,%3Csvg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="%236c6c80"%3E%3Cpath d="M21 19V5c0-1.1-.9-2-2-2H5c-1.1 0-2 .9-2 2v14c0 1.1.9 2 2 2h14c0-1.1-.9-2-2-2zM8.5 13.5l2.5 3.01L14.5 12l4.5 6H5l3.5-4.5z"/%3E%3C/svg%3E';
 
-  const title = Utils.getProductTitle(product);
+    const title = Utils.getProductTitle(product);
 
-  const priceOriginal = Utils.getPriceOriginal(product);
-  const disc = Utils.getDiscountPercent(product);
-  const priceFinal = Utils.getPriceFinal({ priceOriginal, discountPercent: disc });
+    const priceOriginal = Utils.getPriceOriginal(product);
+    const disc = Utils.getDiscountPercent(product);
+    const priceFinal = Utils.getPriceFinal({ priceOriginal, discountPercent: disc });
 
-  const hasDiscount = (disc > 0 && priceFinal < priceOriginal);
+    const hasDiscount = (disc > 0 && priceFinal < priceOriginal);
 
-  const priceHtml = hasDiscount
-    ? `<span class="price-old">${Utils.formatPrice(priceOriginal)}</span>
+    const priceHtml = hasDiscount
+      ? `<span class="price-old">${Utils.formatPrice(priceOriginal)}</span>
        <span class="price-new">${Utils.formatPrice(priceFinal)}</span>`
-    : `<span class="price-new">${Utils.formatPrice(priceOriginal)}</span>`;
+      : `<span class="price-new">${Utils.formatPrice(priceOriginal)}</span>`;
 
-  const ribbonHtml = hasDiscount
-    ? `
+    const ribbonHtml = hasDiscount
+      ? `
       <div class="product-card__ribbon" aria-label="Скидка ${disc}%">
         <div class="product-card__ribbon-strip">
           <div class="product-card__ribbon-value">-${disc}%</div>
@@ -272,9 +272,9 @@ const UI = {
         </div>
       </div>
     `
-    : '';
+      : '';
 
-  return `
+    return `
     <article class="product-card ${hasDiscount ? 'product-card--discount' : ''}" data-product-id="${product.id}">
       <div class="product-card__image">
         <img src="${imageUrl}" alt="${Utils.escapeHtml(title)}" loading="lazy">
@@ -295,6 +295,237 @@ const UI = {
       </div>
     </article>
   `;
+  },
+
+  buildSalesReportHtml(data = {}) {
+    const safe = (v) => Utils.escapeHtml(String(v ?? ''));
+
+    const companyName = String(data.companyName || Config?.receipt?.companyName || 'AutoParts').trim();
+    const title = String(data.title || 'Отчёт по продажам').trim();
+
+    const rangeLabel = String(data.rangeLabel || '').trim();
+    const generatedAt = String(data.generatedAt || Utils.formatDate(new Date(), true)).trim();
+
+    const rows = Array.isArray(data.rows) ? data.rows : [];
+
+    const totals = data.totals || {};
+    const totalSales = Number(totals.totalSales || 0);
+    const totalPositions = Number(totals.totalPositions || 0);
+    const totalQty = Number(totals.totalQty || 0);
+    const totalSum = Number(totals.totalSum || 0);
+
+    const rowsHtml = rows.map((r, idx) => `
+    <tr>
+      <td class="c-num">${idx + 1}</td>
+      <td class="c-date">${safe(r.date || '')}</td>
+      <td class="c-order">#${safe(r.orderNumber || '')}</td>
+      <td class="c-client">${safe(r.userName || '')}</td>
+      <td class="c-phone">${safe(r.userPhone || '')}</td>
+      <td class="c-car">${safe(r.car || '')}</td>
+      <td class="c-part">${safe(r.partName || '')}</td>
+      <td class="c-cond">${safe(r.condition || '')}</td>
+      <td class="c-unit">${safe(r.unitPriceStr || '')}</td>
+      <td class="c-qty">${safe(r.qtyStr || '')}</td>
+      <td class="c-sum">${safe(r.lineTotalStr || '')}</td>
+    </tr>
+  `).join('');
+
+    return `<!doctype html>
+<html lang="ru">
+<head>
+  <meta charset="utf-8"/>
+  <meta name="viewport" content="width=device-width,initial-scale=1"/>
+  <title>${safe(title)}</title>
+  <style>
+    @page { size: A4 landscape; margin: 10mm; }
+
+    html, body {
+      margin: 0;
+      padding: 0;
+      background: #fff;
+      color: #111;
+      -webkit-print-color-adjust: exact;
+      print-color-adjust: exact;
+      font-family: system-ui, -apple-system, Segoe UI, Roboto, Arial, sans-serif;
+    }
+
+    .wrap { padding: 0; }
+
+    .head {
+      display: flex;
+      align-items: flex-end;
+      justify-content: space-between;
+      gap: 16px;
+      margin-bottom: 10px;
+    }
+
+    .h-left { display: grid; gap: 4px; }
+    .company { font-weight: 900; font-size: 18px; }
+    .title { font-weight: 800; font-size: 14px; color: #333; }
+    .meta { font-size: 12px; color: #444; }
+
+    .summary {
+      display: grid;
+      grid-template-columns: repeat(4, minmax(0, 1fr));
+      gap: 8px;
+      margin: 10px 0 12px;
+    }
+
+    .sum-card {
+      border: 1px solid #e6e8ee;
+      border-radius: 10px;
+      padding: 8px 10px;
+      background: #f6f8fc;
+    }
+    .sum-k { font-size: 11px; color: #555; }
+    .sum-v { font-size: 14px; font-weight: 900; margin-top: 2px; }
+
+    table {
+      width: 100%;
+      border-collapse: collapse;
+      font-size: 11px;
+    }
+
+    thead { display: table-header-group; }
+    tfoot { display: table-footer-group; }
+
+    th, td {
+      border: 1px solid #e6e8ee;
+      padding: 6px 7px;
+      vertical-align: top;
+    }
+
+    th {
+      background: #eef3fb;
+      font-weight: 900;
+      text-align: left;
+      color: #222;
+      white-space: nowrap;
+    }
+
+    .c-num { width: 34px; text-align: right; }
+    .c-date { width: 120px; white-space: nowrap; }
+    .c-order { width: 90px; white-space: nowrap; }
+    .c-client { width: 150px; }
+    .c-phone { width: 120px; white-space: nowrap; }
+    .c-car { width: 180px; }
+    .c-part { width: 240px; }
+    .c-cond { width: 70px; white-space: nowrap; }
+    .c-unit { width: 95px; text-align: right; white-space: nowrap; }
+    .c-qty { width: 60px; text-align: right; white-space: nowrap; }
+    .c-sum { width: 105px; text-align: right; white-space: nowrap; font-weight: 900; }
+
+    .footer-note {
+      margin-top: 10px;
+      font-size: 11px;
+      color: #555;
+      display: flex;
+      justify-content: space-between;
+      gap: 12px;
+    }
+
+    .no-print { margin-top: 12px; display: flex; gap: 10px; }
+    .btn {
+      border: 1px solid #cfd7e3;
+      background: #fff;
+      padding: 9px 12px;
+      border-radius: 10px;
+      cursor: pointer;
+      font-weight: 800;
+    }
+
+    @media print {
+      .no-print { display: none !important; }
+    }
+  </style>
+</head>
+<body>
+  <div class="wrap">
+    <div class="head">
+      <div class="h-left">
+        <div class="company">${safe(companyName)}</div>
+        <div class="title">${safe(title)}</div>
+        <div class="meta">${safe(rangeLabel)}</div>
+      </div>
+      <div class="meta">Сформировано: <strong>${safe(generatedAt)}</strong></div>
+    </div>
+
+    <div class="summary">
+      <div class="sum-card"><div class="sum-k">Продаж</div><div class="sum-v">${safe(totalSales)}</div></div>
+      <div class="sum-card"><div class="sum-k">Позиций</div><div class="sum-v">${safe(totalPositions)}</div></div>
+      <div class="sum-card"><div class="sum-k">Штук</div><div class="sum-v">${safe(totalQty)}</div></div>
+      <div class="sum-card"><div class="sum-k">Сумма</div><div class="sum-v">${safe(Utils.formatPrice(totalSum))}</div></div>
+    </div>
+
+    <table>
+      <thead>
+        <tr>
+          <th class="c-num">№</th>
+          <th class="c-date">Дата</th>
+          <th class="c-order">Заказ</th>
+          <th class="c-client">Клиент</th>
+          <th class="c-phone">Телефон</th>
+          <th class="c-car">Авто</th>
+          <th class="c-part">Товар</th>
+          <th class="c-cond">Сост.</th>
+          <th class="c-unit">Цена/шт</th>
+          <th class="c-qty">Кол-во</th>
+          <th class="c-sum">Сумма</th>
+        </tr>
+      </thead>
+      <tbody>
+        ${rowsHtml || `<tr><td colspan="11" style="text-align:center;color:#555;">Нет данных за выбранный период</td></tr>`}
+      </tbody>
+    </table>
+
+    <div class="footer-note">
+      <div>Подпись ответственного: ____________________</div>
+      <div>Итого: <strong>${safe(Utils.formatPrice(totalSum))}</strong></div>
+    </div>
+
+    <div class="no-print">
+      <button class="btn" type="button" onclick="window.print()">Печать</button>
+      <button class="btn" type="button" onclick="window.close()">Закрыть</button>
+    </div>
+  </div>
+</body>
+</html>`;
+  },
+
+  printSalesReport(data, options = {}) {
+  const adminOnly = (options.adminOnly ?? true);
+
+  if (adminOnly) {
+    const isAdmin = !!window.Auth?.isAdmin?.();
+    if (!isAdmin) {
+      this.showToast('Печать отчёта доступна только администратору', 'info');
+      return;
+    }
+  }
+
+  const html = this.buildSalesReportHtml(data);
+
+  const w = window.open('', '_blank', 'width=1200,height=900,menubar=0,toolbar=0,location=0,status=0,scrollbars=1');
+  if (!w) {
+    this.showToast('Разрешите всплывающие окна для печати', 'warning');
+    return;
+  }
+
+  w.document.open();
+  w.document.write(html);
+  w.document.close();
+
+  w.onload = () => {
+    setTimeout(() => {
+      try {
+        w.focus();
+        w.print();
+        w.onafterprint = () => w.close();
+      } catch (e) {
+        console.error('printSalesReport error:', e);
+      }
+    }, 200);
+  };
 },
 
   renderProducts(products) {
